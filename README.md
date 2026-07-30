@@ -33,6 +33,7 @@ A comprehensive **Local Push** integration for Philips air purifiers and humidif
   - [HACS Installation (Recommended)](#hacs-installation-recommended)
   - [Manual Installation](#manual-installation)
 - [Configuration](#️-configuration)
+  - [Communication Protocols](#communication-protocols)
 - [Supported Devices](#-supported-devices)
 - [Available Entities](#-available-entities)
 - [Troubleshooting](#-troubleshooting)
@@ -43,6 +44,7 @@ A comprehensive **Local Push** integration for Philips air purifiers and humidif
 ## Features
 
 - **Local Control**: Direct communication with your device without cloud dependency
+- **Two Transports**: CoAP for current firmware, plus the legacy HTTP API used by older firmware — detected automatically
 - **Auto-Discovery**: Automatic detection of compatible devices on your network
 - **Comprehensive Entity Support**: Fan, humidifier, sensors, switches, lights, and more
 - **Real-time Monitoring**: Air quality sensors, filter status, and device diagnostics
@@ -91,7 +93,7 @@ This integration includes automatic reconnection attempts, but they may not alwa
 
 - Home Assistant 2026.4.0 or newer
 - Philips air purifier/humidifier connected to your local network
-- Device must support local CoAP communication (see [Important Notice](#️-important-notice))
+- Device must support local control over either CoAP or the legacy HTTP API (see [Communication Protocols](#communication-protocols))
 
 ### Setup Steps
 
@@ -99,7 +101,7 @@ This integration includes automatic reconnection attempts, but they may not alwa
 
 The integration automatically discovers compatible devices on your network using:
 
-- MAC address patterns (B0F893*, 047863*, 849DC2*, 80A036*)
+- MAC address patterns (B0F893*, 047863*, 849DC2*, 80A036*, E8C1D7\*)
 - Hostname patterns (mxchip\*)
 
 When a device is discovered, Home Assistant will show a notification. Simply follow the setup wizard.
@@ -113,6 +115,23 @@ If automatic discovery doesn't work:
 3. **Search**: Search for "Philips AirPurifier" and select it
 4. **Enter Details**: Provide your device's IP address or hostname
 5. **Complete Setup**: The model will be detected automatically
+
+### Communication Protocols
+
+Philips shipped two different local APIs, and which one your device speaks depends on its firmware.
+The integration probes for both when you add a device and remembers the result — there is nothing to configure.
+
+|           | CoAP                                        | Legacy HTTP                                            |
+| --------- | ------------------------------------------- | ------------------------------------------------------ |
+| Firmware  | `AWS_Philips_AIR` line                      | Older Philips firmware (e.g. AC2889/10 on firmware 14) |
+| Updates   | Push — the device reports changes instantly | Polled every 30 seconds                                |
+| Detection | Tried first                                 | Tried when CoAP does not answer                        |
+
+Both are entirely local and encrypted; neither uses the cloud. Devices on the older firmware
+cannot be upgraded to CoAP, so HTTP is the permanent path for them rather than a fallback.
+
+If a device is set up over HTTP, expect up to a 30-second delay before a change made on the
+appliance itself shows up in Home Assistant. Changes made _from_ Home Assistant apply immediately.
 
 ### Important Notes
 
@@ -138,7 +157,7 @@ If your device changes IP addresses:
 | **Air Purifiers** | 50+ models     | AC0650, AC0850, AC0950, AC1214, AC1715, AC2729, AC2889, AC2936, AC3033, AC3055, AC3210, AC3259, AC3420, AC3737, AC3829, AC3854, AC3858, AC4220, AC4550, AC5659 |
 | **2-in-1 Combos** | 7 models       | AC0850C series, AMF765, AMF870                                                                                                                                 |
 | **Humidifiers**   | 5 models       | CX3120, CX3550, CX5120, HU1509, HU1510, HU5710                                                                                                                 |
-| **Fans**          | 1 model        | CX7550                                                                                                                                                          |
+| **Fans**          | 1 model        | CX7550                                                                                                                                                         |
 | **Total**         | **63+ models** | **29 series**                                                                                                                                                  |
 
 ### Air Purifiers
@@ -274,12 +293,13 @@ Logs will be available in `home-assistant.log`.
 
 ### Common Issues
 
-| Problem                 | Solution                                                   |
-| ----------------------- | ---------------------------------------------------------- |
-| Device not discovered   | Check network connectivity, ensure device supports CoAP    |
-| Connection drops        | Power cycle device, restart Home Assistant                 |
-| Entities unavailable    | Check device firmware version, verify local API is enabled |
-| Integration not loading | Check Home Assistant logs, verify installation             |
+| Problem                 | Solution                                                    |
+| ----------------------- | ----------------------------------------------------------- |
+| Device not discovered   | Check network connectivity, ensure local control is enabled |
+| Slow to reflect changes | Device is on the HTTP transport, which polls every 30s      |
+| Connection drops        | Power cycle device, restart Home Assistant                  |
+| Entities unavailable    | Check device firmware version, verify local API is enabled  |
+| Integration not loading | Check Home Assistant logs, verify installation              |
 
 ### Getting Help for Unsupported Models
 

@@ -9,6 +9,16 @@ and this project adheres to [Calendar Versioning](https://calver.org/) (`YYYY.MM
 
 ### Added
 
+- Support for devices that speak only the **legacy HTTP (`/di/v1`) API** and have
+  no CoAP stack at all — for example the **AC2889/10 on firmware 14**. The config
+  flow now probes CoAP first and falls back to HTTP, storing the detected
+  transport on the config entry. HTTP devices poll every 30 seconds, since that
+  API cannot push; CoAP devices are unaffected and keep their push behaviour.
+  Because the HTTP status resource carries no identity fields, the model, name,
+  device id, software version and MAC address are read from the `/firmware`,
+  `/wifi` and `/upnp/description.xml` resources instead. `philips-airctrl` ships
+  no HTTP transport, so this lives in the new `http_client.py`.
+- DHCP auto-discovery for the `E8C1D7*` MAC prefix, used by AC2889 units.
 - Support for the **CX7550/01** (Philips oscillating tower fan). It uses Gen3
   CoAP and is fan-only (no heater). Exposes all 12 manual fan speeds, the Auto,
   Sleep and Natural preset modes, on/off oscillation, the display backlight
@@ -18,6 +28,11 @@ and this project adheres to [Calendar Versioning](https://calver.org/) (`YYYY.MM
   push-only (never answers a status read), so the integration nudges the
   display backlight to obtain status. While the fan is off, the firmware forces
   a dim standby display that cannot be turned off from Home Assistant.
+
+### Fixed
+
+- Devices reporting no `WifiVersion` (all legacy HTTP firmware) no longer raise
+  `AttributeError` during the config flow before model matching runs.
 
 ## [2026.6.3] - 2026-06-27
 

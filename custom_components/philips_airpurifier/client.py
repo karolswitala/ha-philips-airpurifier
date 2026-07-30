@@ -1,15 +1,30 @@
-"""Client helpers for Philips Air Purifier CoAP communication."""
+"""Client helpers for Philips Air Purifier device communication.
+
+Devices speak one of two transports: encrypted CoAP (via the upstream
+``philips-airctrl`` library) or the legacy HTTP API (:mod:`.http_client`). The
+helpers here dispatch on :class:`~.const.Protocol` so callers only deal with one
+API; the nudge and device-info helpers are CoAP-only, as those quirks have no
+HTTP equivalent.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from philips_airctrl import CoAPClient
 
+from .const import Protocol
+from .http_client import HTTPClient
+
+if TYPE_CHECKING:
+    from aiohttp import ClientSession
+
 _LOGGER = logging.getLogger(__name__)
+
+type DeviceClient = CoAPClient | HTTPClient
 
 # Delay before nudging, to let the observation register on the device.
 _NUDGE_REGISTER_DELAY = 2.0
@@ -22,8 +37,20 @@ async def async_create_client(
     host: str,
     timeout: float = 25,
     create_client: Any | None = None,
-) -> CoAPClient:
-    """Create a CoAP client for a host with timeout protection."""
+    protocol: Protocol = Protocol.COAP,
+    session: ClientSession | None = None,
+) -> DeviceClient:
+    """Create a client for a host with timeout protection.
+
+    ``protocol`` selects the transport; HTTP additionally requires ``session``,
+    which must be Home Assistant's shared aiohttp session.
+    """
+    if protocol is Protocol.HTTP:
+        if session is None:
+            msg = "An aiohttp session is required for the HTTP protocol"
+            raise ValueError(msg)
+        http_creator = create_client or HTTPClient.create
+        return await asyncio.wait_for(http_creator(host, session), timeout=timeout)
     creator = create_client or CoAPClient.create
     return await asyncio.wait_for(creator(host), timeout=timeout)
 
@@ -33,13 +60,21 @@ async def async_fetch_status(
     connect_timeout: float = 30,
     status_timeout: float = 30,
     create_client: Any | None = None,
+    protocol: Protocol = Protocol.COAP,
+    session: ClientSession | None = None,
 ) -> dict[str, Any]:
-    """Fetch current status using a temporary CoAP client and shut it down.
+    """Fetch current status using a temporary client and shut it down.
 
-    Uses ``observe=False`` (philips-airctrl >= 1.1.0) so this one-shot read does
-    not leave a CoAP observation registered on the device.
+    Over CoAP this uses ``observe=False`` (philips-airctrl >= 1.1.0) so the
+    one-shot read does not leave an observation registered on the device.
     """
-    client = await async_create_client(host, timeout=connect_timeout, create_client=create_client)
+    client = await async_create_client(
+        host,
+        timeout=connect_timeout,
+        create_client=create_client,
+        protocol=protocol,
+        session=session,
+    )
     try:
         status, _ = await asyncio.wait_for(client.get_status(observe=False), timeout=status_timeout)
         return status
@@ -90,7 +125,11 @@ async def async_fetch_status_with_nudge(
     one shared context, so they coexist safely.
     """
     _ = status_timeout  # bounded per-attempt by _NUDGE_WAIT_TIMEOUT below
-    client = await async_create_client(host, timeout=connect_timeout, create_client=create_client)
+    # Nudging is a CoAP-only quirk, so the client is always a CoAPClient here.
+    client = cast(
+        CoAPClient,
+        await async_create_client(host, timeout=connect_timeout, create_client=create_client),
+    )
     _LOGGER.debug("Nudge: client connected to %s, opening observation", host)
     result: dict[str, Any] = {}
     received = asyncio.Event()

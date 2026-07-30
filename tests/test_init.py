@@ -10,7 +10,11 @@ from custom_components.philips_airpurifier import async_unload_entry
 from custom_components.philips_airpurifier.const import (
     CONF_DEVICE_ID,
     CONF_MODEL,
+    CONF_PROTOCOL,
+    CONF_STATUS,
     DOMAIN,
+    HTTP_POLL_INTERVAL,
+    Protocol,
 )
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_HOST, CONF_NAME
@@ -105,3 +109,58 @@ async def test_async_unload_entry_false_skips_shutdown(
 
     assert result is False
     coordinator.async_shutdown.assert_not_called()
+
+
+async def test_setup_entry_without_protocol_uses_coap(
+    hass: HomeAssistant,
+    init_integration: MockConfigEntry,
+) -> None:
+    """Entries created before HTTP support existed keep working over CoAP.
+
+    They carry no CONF_PROTOCOL, so setup must default to CoAP rather than
+    failing or migrating them.
+    """
+    assert CONF_PROTOCOL not in init_integration.data
+    assert init_integration.runtime_data.protocol is Protocol.COAP
+    assert init_integration.runtime_data.update_interval is None
+
+
+async def test_setup_entry_over_http(hass: HomeAssistant) -> None:
+    """An HTTP entry builds an HTTP client and polls instead of observing."""
+    from .const import MOCK_STATUS_HTTP, TEST_HTTP_DEVICE_ID, TEST_HTTP_NAME  # noqa: PLC0415
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            CONF_HOST: "192.168.1.91",
+            CONF_MODEL: "AC2889",
+            CONF_NAME: TEST_HTTP_NAME,
+            CONF_DEVICE_ID: TEST_HTTP_DEVICE_ID,
+            CONF_STATUS: MOCK_STATUS_HTTP,
+            CONF_PROTOCOL: Protocol.HTTP,
+        },
+        unique_id=TEST_HTTP_DEVICE_ID,
+    )
+    entry.add_to_hass(hass)
+
+    client = AsyncMock()
+    client.get_status = AsyncMock(return_value=(MOCK_STATUS_HTTP.copy(), 30))
+    client.shutdown = AsyncMock()
+
+    with patch(
+        "custom_components.philips_airpurifier.async_create_client",
+        AsyncMock(return_value=client),
+    ) as create_client:
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert entry.state is ConfigEntryState.LOADED
+    coordinator = entry.runtime_data
+    assert coordinator.protocol is Protocol.HTTP
+    assert coordinator.update_interval == HTTP_POLL_INTERVAL
+    assert coordinator.data == MOCK_STATUS_HTTP
+    # The HTTP branch must hand the client Home Assistant's shared session.
+    assert create_client.await_args.kwargs["session"] is not None
+
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()

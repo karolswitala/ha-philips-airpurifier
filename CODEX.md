@@ -17,21 +17,25 @@ Read `AGENTS.md` completely before starting any work. It contains:
 - **Title:** Philips Air Purifier Integration
 - **Class prefix:** `PhilipsAirPurifier`
 - **Main code:** `custom_components/philips_airpurifier/`
-- **Upstream library:** `philips-airctrl==1.1.0` — Never bypass it
+- **Upstream library:** `philips-airctrl==1.2.0` — Never bypass it for CoAP
 - **Validate:** `script/check` (type-check + lint + spell)
 - **Test:** `script/test`
 - **Run HA:** `./script/develop`
 
 ## 🚫 CRITICAL: Upstream Library Rule
 
-**Device communication MUST ONLY go through `philips-airctrl` library. Never bypass it.**
+**CoAP communication MUST ONLY go through the `philips-airctrl` library. Never bypass it.**
 
 - ✅ Use: `await self.client.get_status()`, `await self.client.observe_status()`, `await self.client.set_control_values()`
-- ❌ Never: Direct socket calls, alternative CoAP libraries, manual encryption, HTTP workarounds
+- ❌ Never: Direct socket calls, alternative CoAP libraries, manual CoAP encryption
 
-**If feature is missing:** Open upstream issue at [philips-airctrl/issues](https://github.com/ruaan-deysel/philips-airctrl/issues) — do not work around it.
+**If a CoAP feature is missing:** Open upstream issue at [philips-airctrl/issues](https://github.com/ruaan-deysel/philips-airctrl/issues) — do not work around it.
 
-See `AGENTS.md` section "CRITICAL: Upstream Library Rules" for full details and examples.
+**Exception — legacy HTTP:** Older firmware (e.g. AC2889/10 on firmware 14) has no CoAP stack and speaks only
+the `/di/v1` HTTP API, which `philips-airctrl` does not implement. `custom_components/philips_airpurifier/http_client.py`
+is the sanctioned home for that protocol — do not put HTTP protocol code anywhere else.
+
+See `.github/instructions/upstream_library.instructions.md` for full details and examples.
 
 ## Path-Specific Instructions
 

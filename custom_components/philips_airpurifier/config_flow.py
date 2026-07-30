@@ -1,5 +1,6 @@
 """The Philips AirPurifier component."""
 
+import contextlib
 import ipaddress
 import logging
 import re
@@ -12,17 +13,29 @@ from homeassistant import config_entries, exceptions
 from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.const import CONF_HOST, CONF_NAME
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.device_registry import format_mac
 from homeassistant.helpers.service_info.dhcp import DhcpServiceInfo
 
 from .client import (
+    async_create_client,
     async_fetch_device_info,
     async_fetch_status,
     async_fetch_status_with_nudge,
 )
-from .const import CONF_DEVICE_ID, CONF_MAC, CONF_MODEL, CONF_STATUS, DOMAIN, PhilipsApi
+from .const import (
+    CONF_DEVICE_ID,
+    CONF_MAC,
+    CONF_MODEL,
+    CONF_PROTOCOL,
+    CONF_STATUS,
+    DOMAIN,
+    PhilipsApi,
+    Protocol,
+)
 from .device_models import DEVICE_MODELS
 from .helpers import extract_model, extract_name
+from .http_client import ATTR_MAC
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -52,13 +65,20 @@ class PhilipsAirPurifierConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._device_id: str | None = None
         self._wifi_version: Any = None
         self._status: Any = None
+        self._protocol: Protocol = Protocol.COAP
 
     def _get_schema(self, user_input: dict[str, Any]) -> vol.Schema:
         """Provide schema for user input."""
         return vol.Schema({vol.Required(CONF_HOST, default=user_input.get(CONF_HOST, "")): cv.string})
 
     async def _async_probe_host(self, host: str) -> dict[str, Any]:
-        """Fetch status from host and validate basic connectivity."""
+        """Fetch status from host and validate basic connectivity.
+
+        Tries CoAP first, since that is what all current-firmware devices speak,
+        and falls back to the legacy HTTP API. The transport that answered is
+        recorded on ``self._protocol`` and stored on the config entry, so setup
+        never has to probe again.
+        """
         if not host_valid(host):
             raise InvalidHost
 
@@ -74,6 +94,7 @@ class PhilipsAirPurifierConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 create_client=CoAPClient.create,
             )
             _LOGGER.debug("got status")
+            self._protocol = Protocol.COAP
             return status
         except TimeoutError:
             # Some firmwares never answer a status read and only push status on a
@@ -81,12 +102,57 @@ class PhilipsAirPurifierConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             # resource and, if it declares a status nudge, retry with that.
             nudged = await self._async_probe_host_with_nudge(host)
             if nudged is not None:
+                self._protocol = Protocol.COAP
                 return nudged
+            # Older firmware has no CoAP stack at all and only serves the
+            # legacy HTTP API, so a timeout is expected there rather than fatal.
+            http_status = await self._async_probe_host_http(host)
+            if http_status is not None:
+                return http_status
             _LOGGER.warning(r"Timeout, host %s doesn't answer", self._host)
             raise
         except Exception as ex:
-            _LOGGER.warning(r"Failed to connect: %s", ex)
+            _LOGGER.warning(r"CoAP connection failed: %s", ex)
+            http_status = await self._async_probe_host_http(host)
+            if http_status is not None:
+                return http_status
             raise CannotConnect from ex
+
+    async def _async_probe_host_http(self, host: str) -> dict[str, Any] | None:
+        """Probe the legacy HTTP API, returning its status or None if unreachable.
+
+        Also captures the MAC address the HTTP API reports, so the device is
+        registered with a network-MAC connection and stays re-discoverable after
+        a DHCP lease change (issue #8) -- the CoAP path only gets a MAC when the
+        flow was started by DHCP discovery.
+        """
+        _LOGGER.debug("trying the HTTP API for host %s", host)
+        try:
+            client = await async_create_client(
+                host,
+                timeout=30,
+                protocol=Protocol.HTTP,
+                session=async_get_clientsession(self.hass),
+            )
+        except Exception as ex:  # noqa: BLE001
+            _LOGGER.debug("HTTP API not available on %s: %s", host, ex)
+            return None
+
+        try:
+            info = await client.get_device_info()
+            if not self._mac and info.get(ATTR_MAC):
+                self._mac = format_mac(str(info[ATTR_MAC]))
+            status, _ = await client.get_status(observe=False)
+        except Exception as ex:  # noqa: BLE001
+            _LOGGER.debug("HTTP status read failed for %s: %s", host, ex)
+            return None
+        finally:
+            with contextlib.suppress(Exception):
+                await client.shutdown()
+
+        _LOGGER.info("Host %s answered over the legacy HTTP API", host)
+        self._protocol = Protocol.HTTP
+        return status
 
     async def _async_probe_host_with_nudge(self, host: str) -> dict[str, Any] | None:
         """Retry the status read with a nudge for devices that need one.
@@ -118,6 +184,38 @@ class PhilipsAirPurifierConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         except Exception as ex:  # noqa: BLE001
             _LOGGER.warning("Nudge-based status read failed for %s: %s", host, ex)
             return None
+
+    def _match_model(self, source: str) -> str | None:
+        """Return the DEVICE_MODELS key for the detected model, or None if unsupported.
+
+        Candidates are tried most specific first: the exact model, then the
+        firmware-qualified name (e.g. ``AC0850/11 AWS_Philips_AIR``), then the
+        six-character family.
+
+        The firmware-qualified candidate is skipped when the device reports no
+        ``WifiVersion``. Legacy HTTP firmware has no such field, and building the
+        candidate unconditionally raised ``AttributeError`` on None.
+        """
+        model = str(self._model)
+        model_family = model[:6]
+
+        candidates = [model]
+        if self._wifi_version:
+            candidates.append(f"{model} {self._wifi_version.split('@')[0]}")
+        candidates.append(model_family)
+
+        for candidate in candidates:
+            if candidate in DEVICE_MODELS:
+                _LOGGER.info("Model %s supported", candidate)
+                return candidate
+
+        _LOGGER.warning(
+            "Model %s of family %s not supported in %s",
+            model,
+            model_family,
+            source,
+        )
+        return None
 
     def _async_find_matching_entry(self) -> config_entries.ConfigEntry | None:
         """Find an existing entry for the discovered device by MAC or host."""
@@ -199,26 +297,10 @@ class PhilipsAirPurifierConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._status = status
 
         # check if model is supported
-        model_long = self._model + " " + self._wifi_version.split("@")[0]
-        model = self._model
-        model_family = self._model[:6]
-
-        if model in DEVICE_MODELS:
-            _LOGGER.info("Model %s supported", model)
-            self._model = model
-        elif model_long in DEVICE_MODELS:
-            _LOGGER.info("Model %s supported", model_long)
-            self._model = model_long
-        elif model_family in DEVICE_MODELS:
-            _LOGGER.info("Model family %s supported", model_family)
-            self._model = model_family
-        else:
-            _LOGGER.warning(
-                "Model %s of family %s not supported in DHCP discovery",
-                model,
-                model_family,
-            )
+        matched = self._match_model("DHCP discovery")
+        if matched is None:
             return self.async_abort(reason="model_unsupported")
+        self._model = matched
 
         # use the device ID as unique_id
         unique_id = self._device_id
@@ -263,6 +345,7 @@ class PhilipsAirPurifierConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             user_input[CONF_DEVICE_ID] = self._device_id
             user_input[CONF_HOST] = self._host
             user_input[CONF_STATUS] = self._status
+            user_input[CONF_PROTOCOL] = self._protocol
             if self._mac:
                 user_input[CONF_MAC] = self._mac
 
@@ -310,6 +393,9 @@ class PhilipsAirPurifierConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 config_entry_data[CONF_DEVICE_ID] = self._device_id
                 config_entry_data[CONF_HOST] = self._host
                 config_entry_data[CONF_STATUS] = status
+                config_entry_data[CONF_PROTOCOL] = self._protocol
+                if self._mac:
+                    config_entry_data[CONF_MAC] = self._mac
 
                 _LOGGER.debug(
                     "Detected host %s as model %s with name: %s and firmware: %s",
@@ -320,26 +406,12 @@ class PhilipsAirPurifierConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 )
 
                 # check if model is supported
-                model_long = self._model + " " + self._wifi_version.split("@")[0]
-                model = self._model
-                model_family = self._model[:6]
-
-                if model in DEVICE_MODELS:
-                    _LOGGER.info("Model %s supported", model)
-                    config_entry_data[CONF_MODEL] = model
-                elif model_long in DEVICE_MODELS:
-                    _LOGGER.info("Model %s supported", model_long)
-                    config_entry_data[CONF_MODEL] = model_long
-                elif model_family in DEVICE_MODELS:
-                    _LOGGER.info("Model family %s supported", model_family)
-                    config_entry_data[CONF_MODEL] = model_family
-                else:
-                    _LOGGER.warning(
-                        "Model %s of family %s not supported in user discovery",
-                        model,
-                        model_family,
-                    )
+                matched = self._match_model("user discovery")
+                if matched is None:
                     return self.async_abort(reason="model_unsupported")
+                # Only CONF_MODEL takes the matched key; the entry title keeps
+                # the full detected model, as it always has.
+                config_entry_data[CONF_MODEL] = matched
 
                 # use the device ID as unique_id
                 config_entry_unique_id = self._device_id
@@ -389,7 +461,12 @@ class PhilipsAirPurifierConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     if detected_device_id != entry.data.get(CONF_DEVICE_ID):
                         return self.async_abort(reason="different_device")
 
-                    updated_data = {**entry.data, CONF_HOST: host_input, CONF_STATUS: status}
+                    updated_data = {
+                        **entry.data,
+                        CONF_HOST: host_input,
+                        CONF_STATUS: status,
+                        CONF_PROTOCOL: self._protocol,
+                    }
                     self.hass.config_entries.async_update_entry(entry, data=updated_data)
                     await self.hass.config_entries.async_reload(entry.entry_id)
                     return self.async_abort(reason="reconfigure_successful")

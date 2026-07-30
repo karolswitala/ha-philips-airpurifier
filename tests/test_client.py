@@ -9,9 +9,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from custom_components.philips_airpurifier.client import (
+    async_create_client,
     async_fetch_device_info,
+    async_fetch_status,
     async_fetch_status_with_nudge,
 )
+from custom_components.philips_airpurifier.const import Protocol
 
 _CLIENT = "custom_components.philips_airpurifier.client"
 
@@ -139,3 +142,60 @@ async def test_async_fetch_status_with_nudge_observe_error_is_logged() -> None:
         await async_fetch_status_with_nudge("1.2.3.4", [("D03105", 0)])
 
     client.shutdown.assert_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Transport dispatch
+# ---------------------------------------------------------------------------
+
+
+async def test_create_client_defaults_to_coap() -> None:
+    """Without a protocol the CoAP client is used, as it always was."""
+    coap_client = MagicMock()
+    create = AsyncMock(return_value=coap_client)
+
+    result = await async_create_client("1.2.3.4", create_client=create)
+
+    assert result is coap_client
+    create.assert_awaited_once_with("1.2.3.4")
+
+
+async def test_create_client_builds_an_http_client() -> None:
+    """The HTTP protocol creates a client bound to the given session."""
+    http_client = MagicMock()
+    create = AsyncMock(return_value=http_client)
+    session = MagicMock()
+
+    result = await async_create_client(
+        "1.2.3.4",
+        create_client=create,
+        protocol=Protocol.HTTP,
+        session=session,
+    )
+
+    assert result is http_client
+    create.assert_awaited_once_with("1.2.3.4", session)
+
+
+async def test_create_client_requires_a_session_for_http() -> None:
+    """HTTP without a session is a programming error, not a device failure."""
+    with pytest.raises(ValueError, match="aiohttp session is required"):
+        await async_create_client("1.2.3.4", protocol=Protocol.HTTP)
+
+
+async def test_fetch_status_over_http_shuts_the_client_down() -> None:
+    """A one-shot HTTP read closes its temporary client."""
+    client = MagicMock()
+    client.get_status = AsyncMock(return_value=({"pwr": "1"}, 30))
+    client.shutdown = AsyncMock()
+
+    status = await async_fetch_status(
+        "1.2.3.4",
+        create_client=AsyncMock(return_value=client),
+        protocol=Protocol.HTTP,
+        session=MagicMock(),
+    )
+
+    assert status == {"pwr": "1"}
+    client.get_status.assert_awaited_once_with(observe=False)
+    client.shutdown.assert_awaited_once()

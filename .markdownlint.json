@@ -5,6 +5,7 @@
   "MD033": false,
   "MD051": false,
   "MD041": false,
+  "MD024": { "siblings_only": true },
   "no-trailing-punctuation": false,
   "no-inline-html": {
     "allowed_elements": ["br", "details", "summary", "img", "a", "kbd"]

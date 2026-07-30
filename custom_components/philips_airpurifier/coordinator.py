@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from philips_airctrl import CoAPClient
 
@@ -13,12 +13,14 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .client import async_create_client, async_fetch_status_with_nudge
-from .const import DOMAIN
+from .const import DOMAIN, HTTP_POLL_INTERVAL, Protocol
 from .device_models import DEVICE_MODELS
 from .model import ApiGeneration, DeviceInformation, DeviceModelConfig
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
+
+    from .client import DeviceClient
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -29,24 +31,33 @@ RECONNECT_MAX_DELAY = 60
 
 
 class PhilipsAirPurifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
-    """Coordinator to manage data from Philips AirPurifier via CoAP push."""
+    """Coordinator to manage data from a Philips AirPurifier.
+
+    CoAP devices push their status, so the coordinator observes and has no
+    update interval. The legacy HTTP API cannot push, so HTTP devices poll on
+    ``HTTP_POLL_INTERVAL`` and skip the observe, watchdog and reconnect
+    machinery entirely -- ``DataUpdateCoordinator`` already retries failed polls.
+    """
 
     def __init__(
         self,
         hass: HomeAssistant,
-        client: CoAPClient,
+        client: DeviceClient,
         host: str,
         device_info: DeviceInformation,
+        protocol: Protocol = Protocol.COAP,
     ) -> None:
         """Initialize the coordinator."""
         super().__init__(
             hass,
             _LOGGER,
             name=DOMAIN,
+            update_interval=HTTP_POLL_INTERVAL if protocol is Protocol.HTTP else None,
         )
         self.client = client
         self.host = host
         self.device_info = device_info
+        self.protocol = protocol
 
         self._observe_task: asyncio.Task[None] | None = None
         self._reconnect_task: asyncio.Task[None] | None = None
@@ -133,7 +144,9 @@ class PhilipsAirPurifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         resting = base[-1][1]
 
         # Restore the user's last-known value for the nudged key when we have it.
-        if self.data is not None and self.data.get(key) is not None:
+        # DataUpdateCoordinator types `data` as non-Optional, but it really is
+        # None until the first successful refresh, so the guard is load-bearing.
+        if self.data is not None and self.data.get(key) is not None:  # pyright: ignore[reportUnnecessaryComparison]
             resting = self.data[key]
 
         # The transient write must differ from the resting value, otherwise the
@@ -165,12 +178,17 @@ class PhilipsAirPurifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.async_set_updated_data(status)
 
     async def _async_update_data(self) -> dict[str, Any]:
-        """Fetch data from the device (used for initial refresh and fallback)."""
-        if self.model_config.status_nudge:
+        """Fetch data from the device.
+
+        For CoAP this backs the initial refresh and the nudge fallback; for HTTP
+        it is the regular poll.
+        """
+        if self.protocol is Protocol.COAP and self.model_config.status_nudge:
             # This firmware never answers a status read; ongoing state comes
             # from the observe stream. Return the last pushed status if we have
             # it, otherwise force one push via a nudge.
-            if self.data is not None:
+            # None until the first successful refresh, despite the declared type.
+            if self.data is not None:  # pyright: ignore[reportUnnecessaryComparison]
                 self._mark_available()
                 return self.data
             try:
@@ -219,8 +237,10 @@ class PhilipsAirPurifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_observe_status(self) -> None:
         """Observe device status via CoAP push updates."""
+        # Only reached via _start_observing, which HTTP entries never call.
+        client = cast(CoAPClient, self.client)
         try:
-            async for status in self.client.observe_status():
+            async for status in client.observe_status():
                 self._last_update = asyncio.get_event_loop().time()
                 self._mark_available()
                 self.async_set_updated_data(status)
@@ -327,7 +347,21 @@ class PhilipsAirPurifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._schedule_reconnect_retry(retry_delay)
 
     async def async_first_refresh_and_observe(self) -> None:
-        """Perform first refresh and start observing."""
+        """Perform first refresh and, on push transports, start observing."""
+        if self.protocol is Protocol.HTTP:
+            # Polling transport: there is nothing to observe, and
+            # DataUpdateCoordinator drives every subsequent update.
+            try:
+                status, _ = await self.client.get_status(observe=False)
+            except Exception as err:
+                self._mark_unavailable("initial refresh failed")
+                msg = f"Failed to connect to device at {self.host}"
+                raise ConfigEntryNotReady(msg) from err
+            self._mark_available()
+            self.async_set_updated_data(status)
+            _LOGGER.debug("First refresh (via HTTP poll) completed for %s", self.host)
+            return
+
         if self.model_config.status_nudge:
             try:
                 # This firmware never answers a status read; force the first

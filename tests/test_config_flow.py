@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from contextlib import contextmanager
+from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -11,10 +13,13 @@ from custom_components.philips_airpurifier.const import (
     CONF_DEVICE_ID,
     CONF_MAC,
     CONF_MODEL,
+    CONF_PROTOCOL,
     CONF_STATUS,
     DOMAIN,
     PhilipsApi,
+    Protocol,
 )
+from custom_components.philips_airpurifier.http_client import ATTR_MAC
 from homeassistant.config_entries import SOURCE_DHCP, SOURCE_RECONFIGURE, SOURCE_USER
 from homeassistant.const import CONF_HOST, CONF_NAME
 from homeassistant.core import HomeAssistant
@@ -23,13 +28,21 @@ from homeassistant.helpers.service_info.dhcp import DhcpServiceInfo
 
 from .const import (
     MOCK_STATUS_GEN1,
+    MOCK_STATUS_HTTP,
     TEST_DEVICE_ID,
     TEST_HOST,
+    TEST_HTTP_DEVICE_ID,
+    TEST_HTTP_MAC,
+    TEST_HTTP_MODEL,
+    TEST_HTTP_NAME,
     TEST_MAC,
     TEST_MAC_FORMATTED,
     TEST_MODEL,
     TEST_NAME,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 
 @pytest.fixture(autouse=True)
@@ -55,6 +68,56 @@ def _no_real_entry_setup() -> object:
         mock_setup_client_cls.create = AsyncMock(return_value=client)
         mock_setup_client_cls.return_value = client
         yield
+
+
+@pytest.fixture(autouse=True)
+def _no_real_http_fallback() -> Generator[MagicMock]:
+    """Keep the HTTP fallback probe offline.
+
+    Every CoAP failure path now falls back to probing the legacy HTTP API.
+    Tests asserting CoAP behaviour must not open a socket doing so; tests that
+    cover the fallback patch this again with their own client.
+    """
+    with patch(
+        "custom_components.philips_airpurifier.config_flow.async_create_client",
+        side_effect=OSError("connection refused"),
+    ) as mock:
+        yield mock
+
+
+def _mock_http_client() -> AsyncMock:
+    """Return a mocked HTTP client answering as the AC2889 does."""
+    client = AsyncMock()
+    client.get_device_info = AsyncMock(
+        return_value={
+            PhilipsApi.DEVICE_ID: TEST_HTTP_DEVICE_ID,
+            PhilipsApi.MODEL_ID: TEST_HTTP_MODEL,
+            PhilipsApi.NAME: TEST_HTTP_NAME,
+            ATTR_MAC: TEST_HTTP_MAC,
+        }
+    )
+    client.get_status = AsyncMock(return_value=(MOCK_STATUS_HTTP.copy(), 30))
+    client.set_control_values = AsyncMock()
+    client.set_control_value = AsyncMock()
+    client.shutdown = AsyncMock()
+    return client
+
+
+@contextmanager
+def _http_device_available() -> Generator[AsyncMock]:
+    """Make both the flow probe and the follow-on entry setup speak HTTP."""
+    client = _mock_http_client()
+    with (
+        patch(
+            "custom_components.philips_airpurifier.config_flow.async_create_client",
+            AsyncMock(return_value=client),
+        ),
+        patch(
+            "custom_components.philips_airpurifier.async_create_client",
+            AsyncMock(return_value=client),
+        ),
+    ):
+        yield client
 
 
 async def test_user_flow_success(
@@ -1060,3 +1123,189 @@ async def test_user_flow_model_family_supported_branch(hass: HomeAssistant) -> N
         )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
+
+
+# ---------------------------------------------------------------------------
+# Legacy HTTP transport
+# ---------------------------------------------------------------------------
+
+
+async def test_user_flow_falls_back_to_http(hass: HomeAssistant) -> None:
+    """A device with no CoAP stack is set up over the legacy HTTP API.
+
+    Mirrors a real AC2889/10 on firmware 14: the CoAP read times out, the
+    device declares no status nudge, and the HTTP probe answers.
+    """
+    with (
+        patch(
+            "custom_components.philips_airpurifier.config_flow.async_fetch_status",
+            AsyncMock(side_effect=TimeoutError),
+        ),
+        patch(
+            "custom_components.philips_airpurifier.config_flow.async_fetch_device_info",
+            AsyncMock(side_effect=TimeoutError),
+        ),
+        _http_device_available(),
+    ):
+        result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_HOST: TEST_HOST},
+        )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == f"{TEST_HTTP_MODEL} {TEST_HTTP_NAME}"
+    assert result["data"][CONF_PROTOCOL] == Protocol.HTTP
+    # AC2889/10 resolves to the AC2889 family entry.
+    assert result["data"][CONF_MODEL] == "AC2889"
+    assert result["data"][CONF_DEVICE_ID] == TEST_HTTP_DEVICE_ID
+    assert result["data"][CONF_STATUS] == MOCK_STATUS_HTTP
+    # The MAC comes from the HTTP /wifi resource, not from DHCP.
+    assert result["data"][CONF_MAC] == TEST_HTTP_MAC
+
+
+async def test_user_flow_falls_back_to_http_after_coap_error(hass: HomeAssistant) -> None:
+    """A non-timeout CoAP failure also falls through to the HTTP probe."""
+    with (
+        patch(
+            "custom_components.philips_airpurifier.config_flow.async_fetch_status",
+            AsyncMock(side_effect=OSError("boom")),
+        ),
+        _http_device_available(),
+    ):
+        result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_HOST: TEST_HOST},
+        )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_PROTOCOL] == Protocol.HTTP
+
+
+async def test_user_flow_http_status_read_fails(hass: HomeAssistant) -> None:
+    """A host that connects over HTTP but will not answer reports cannot_connect."""
+    client = _mock_http_client()
+    client.get_status = AsyncMock(side_effect=OSError("boom"))
+
+    with (
+        patch(
+            "custom_components.philips_airpurifier.config_flow.async_fetch_status",
+            AsyncMock(side_effect=TimeoutError),
+        ),
+        patch(
+            "custom_components.philips_airpurifier.config_flow.async_fetch_device_info",
+            AsyncMock(side_effect=TimeoutError),
+        ),
+        patch(
+            "custom_components.philips_airpurifier.config_flow.async_create_client",
+            AsyncMock(return_value=client),
+        ),
+    ):
+        result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_HOST: TEST_HOST},
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {CONF_HOST: "cannot_connect"}
+    client.shutdown.assert_awaited()
+
+
+async def test_user_flow_without_wifi_version(hass: HomeAssistant) -> None:
+    """A status carrying no WifiVersion still resolves a model.
+
+    Legacy HTTP firmware reports no WifiVersion at all; building the
+    firmware-qualified model candidate from it used to raise AttributeError
+    before any model matching ran.
+    """
+    status = MOCK_STATUS_GEN1.copy()
+    del status[PhilipsApi.WIFI_VERSION]
+
+    with patch("custom_components.philips_airpurifier.config_flow.CoAPClient") as mock_cls:
+        client = AsyncMock()
+        client.get_status = AsyncMock(return_value=(status, 60))
+        client.shutdown = AsyncMock()
+        mock_cls.create = AsyncMock(return_value=client)
+
+        result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_HOST: TEST_HOST},
+        )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_MODEL] == TEST_MODEL
+    assert result["data"][CONF_PROTOCOL] == Protocol.COAP
+
+
+async def test_dhcp_discovery_falls_back_to_http(hass: HomeAssistant) -> None:
+    """DHCP discovery of an HTTP-only device reaches the confirm step."""
+    with (
+        patch(
+            "custom_components.philips_airpurifier.config_flow.async_fetch_status",
+            AsyncMock(side_effect=TimeoutError),
+        ),
+        patch(
+            "custom_components.philips_airpurifier.config_flow.async_fetch_device_info",
+            AsyncMock(side_effect=TimeoutError),
+        ),
+        _http_device_available(),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": SOURCE_DHCP},
+            data=DhcpServiceInfo(ip=TEST_HOST, macaddress=TEST_MAC, hostname="philips-air"),
+        )
+
+        assert result["type"] is FlowResultType.FORM
+        assert result["step_id"] == "confirm"
+
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], user_input={})
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_PROTOCOL] == Protocol.HTTP
+    # The MAC discovered via DHCP wins over the one the device reports.
+    assert result["data"][CONF_MAC] == TEST_MAC_FORMATTED
+
+
+async def test_reconfigure_flow_records_protocol(hass: HomeAssistant) -> None:
+    """Reconfiguring an entry re-detects and stores the transport."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            CONF_HOST: "192.168.1.50",
+            CONF_MODEL: "AC2889",
+            CONF_NAME: TEST_HTTP_NAME,
+            CONF_DEVICE_ID: TEST_HTTP_DEVICE_ID,
+            CONF_PROTOCOL: Protocol.HTTP,
+        },
+        unique_id=TEST_HTTP_DEVICE_ID,
+    )
+    entry.add_to_hass(hass)
+
+    with (
+        patch(
+            "custom_components.philips_airpurifier.config_flow.async_fetch_status",
+            AsyncMock(side_effect=TimeoutError),
+        ),
+        patch(
+            "custom_components.philips_airpurifier.config_flow.async_fetch_device_info",
+            AsyncMock(side_effect=TimeoutError),
+        ),
+        _http_device_available(),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": SOURCE_RECONFIGURE, "entry_id": entry.entry_id},
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_HOST: TEST_HOST},
+        )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.data[CONF_HOST] == TEST_HOST
+    assert entry.data[CONF_PROTOCOL] == Protocol.HTTP

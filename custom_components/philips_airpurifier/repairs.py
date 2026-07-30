@@ -12,14 +12,29 @@ from homeassistant.const import CONF_HOST
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import device_registry as dr, entity_registry as er, issue_registry as ir
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .client import async_fetch_status
-from .const import CONF_STATUS, DOMAIN, OPT_FILTER_WARNING_ACK
+from .const import CONF_PROTOCOL, CONF_STATUS, DOMAIN, OPT_FILTER_WARNING_ACK, Protocol
 
 if TYPE_CHECKING:
+    from homeassistant.config_entries import ConfigEntry
+
     from .coordinator import PhilipsAirPurifierCoordinator
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _transport_kwargs(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
+    """Build the async_fetch_status kwargs for the transport an entry uses.
+
+    Without this, connectivity checks would probe every device over CoAP and
+    always report HTTP-only devices as unreachable.
+    """
+    protocol = Protocol(entry.data.get(CONF_PROTOCOL, Protocol.COAP))
+    if protocol is Protocol.HTTP:
+        return {"protocol": protocol, "session": async_get_clientsession(hass)}
+    return {"create_client": CoAPClient.create}
 
 
 async def async_create_fix_flow(
@@ -84,7 +99,7 @@ class ConnectivityRepairFlow(RepairsFlow):
                         host,
                         connect_timeout=10,
                         status_timeout=10,
-                        create_client=CoAPClient.create,
+                        **_transport_kwargs(self.hass, entry),
                     )
 
                     # If we get here, connectivity is working
@@ -264,7 +279,7 @@ class ConfigurationMigrationFlow(RepairsFlow):
                                 host,
                                 connect_timeout=30,
                                 status_timeout=30,
-                                create_client=CoAPClient.create,
+                                **_transport_kwargs(self.hass, entry),
                             )
 
                             # Update entry with status data

@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.philips_airpurifier.const import HTTP_POLL_INTERVAL, Protocol
 from custom_components.philips_airpurifier.coordinator import (
     PhilipsAirPurifierCoordinator,
 )
@@ -17,7 +18,14 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
-from .const import MOCK_STATUS_GEN1, TEST_DEVICE_ID, TEST_HOST, TEST_MODEL, TEST_NAME
+from .const import (
+    MOCK_STATUS_GEN1,
+    MOCK_STATUS_HTTP,
+    TEST_DEVICE_ID,
+    TEST_HOST,
+    TEST_MODEL,
+    TEST_NAME,
+)
 
 
 async def test_coordinator_data_available(
@@ -205,6 +213,7 @@ def _make_coordinator(
     *,
     model: str = TEST_MODEL,
     client: AsyncMock | None = None,
+    protocol: Protocol = Protocol.COAP,
 ) -> PhilipsAirPurifierCoordinator:
     """Create a coordinator instance for unit-path testing."""
     device_info = DeviceInformation(
@@ -213,7 +222,15 @@ def _make_coordinator(
         device_id=TEST_DEVICE_ID,
         host=TEST_HOST,
     )
-    return PhilipsAirPurifierCoordinator(hass, client or AsyncMock(), TEST_HOST, device_info)
+    return PhilipsAirPurifierCoordinator(hass, client or AsyncMock(), TEST_HOST, device_info, protocol)
+
+
+def _make_http_coordinator(hass: HomeAssistant, client: AsyncMock | None = None) -> PhilipsAirPurifierCoordinator:
+    """Create a coordinator backed by the legacy HTTP transport."""
+    if client is None:
+        client = AsyncMock()
+        client.get_status = AsyncMock(return_value=(MOCK_STATUS_HTTP.copy(), 30))
+    return _make_coordinator(hass, model="AC2889", client=client, protocol=Protocol.HTTP)
 
 
 async def test_coordinator_model_config_family_fallback(hass: HomeAssistant) -> None:
@@ -749,3 +766,148 @@ async def test_do_reconnect_nudge(hass: HomeAssistant) -> None:
         await coordinator._do_reconnect()
 
     assert coordinator.data == _CX_STATUS
+
+
+# ---------------------------------------------------------------------------
+# Legacy HTTP transport (polling)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+async def test_http_coordinator_polls_on_an_interval(hass: HomeAssistant) -> None:
+    """An HTTP coordinator polls; a CoAP one waits for pushes instead."""
+    assert _make_http_coordinator(hass).update_interval == HTTP_POLL_INTERVAL
+    assert _make_coordinator(hass).update_interval is None
+
+
+@pytest.mark.unit
+async def test_http_first_refresh_publishes_status_without_observing(hass: HomeAssistant) -> None:
+    """The first HTTP refresh reads status and starts no observation."""
+    coordinator = _make_http_coordinator(hass)
+
+    with patch.object(coordinator, "_start_observing") as start_observing:
+        await coordinator.async_first_refresh_and_observe()
+
+    assert coordinator.data == MOCK_STATUS_HTTP
+    assert coordinator.last_update_success is True
+    start_observing.assert_not_called()
+    assert coordinator._observe_task is None
+    assert coordinator._watchdog_task is None
+
+
+@pytest.mark.unit
+async def test_http_first_refresh_failure_raises(hass: HomeAssistant) -> None:
+    """A device that will not answer the first HTTP read blocks setup."""
+    client = AsyncMock()
+    client.get_status = AsyncMock(side_effect=OSError("boom"))
+    coordinator = _make_http_coordinator(hass, client)
+
+    with pytest.raises(ConfigEntryNotReady):
+        await coordinator.async_first_refresh_and_observe()
+
+    assert coordinator.last_update_success is False
+
+
+@pytest.mark.unit
+async def test_http_update_data_polls_the_device(hass: HomeAssistant) -> None:
+    """Each scheduled poll re-reads the device status."""
+    coordinator = _make_http_coordinator(hass)
+
+    assert await coordinator._async_update_data() == MOCK_STATUS_HTTP
+
+
+@pytest.mark.unit
+async def test_http_update_data_failure_raises_update_failed(hass: HomeAssistant) -> None:
+    """A failed poll marks the device unavailable."""
+    client = AsyncMock()
+    client.get_status = AsyncMock(side_effect=OSError("boom"))
+    coordinator = _make_http_coordinator(hass, client)
+
+    with pytest.raises(UpdateFailed):
+        await coordinator._async_update_data()
+
+    assert coordinator.last_update_success is False
+
+
+@pytest.mark.unit
+async def test_http_ignores_status_nudge_config(hass: HomeAssistant) -> None:
+    """A nudge declared by a model is a CoAP-only quirk and must not fire.
+
+    Guards against an HTTP entry for a nudge model taking the CoAP nudge path,
+    which would call CoAP helpers on an HTTP client.
+    """
+    client = AsyncMock()
+    client.get_status = AsyncMock(return_value=(MOCK_STATUS_HTTP.copy(), 30))
+    coordinator = _make_coordinator(hass, model="CX7550", client=client, protocol=Protocol.HTTP)
+    assert coordinator.model_config.status_nudge is not None
+
+    with patch(f"{_COORD}.async_fetch_status_with_nudge", AsyncMock()) as nudge:
+        result = await coordinator._async_update_data()
+
+    nudge.assert_not_called()
+    assert result == MOCK_STATUS_HTTP
+
+
+@pytest.mark.unit
+async def test_http_shutdown_closes_client(hass: HomeAssistant) -> None:
+    """Unloading an HTTP entry shuts the client down."""
+    client = AsyncMock()
+    client.get_status = AsyncMock(return_value=(MOCK_STATUS_HTTP.copy(), 30))
+    coordinator = _make_http_coordinator(hass, client)
+
+    await coordinator.async_shutdown()
+
+    client.shutdown.assert_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Reconnect retry scheduling
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+async def test_schedule_reconnect_retry_skipped_while_shutting_down(hass: HomeAssistant) -> None:
+    """No retry is scheduled once the coordinator is shutting down."""
+    coordinator = _make_coordinator(hass)
+    coordinator._shutting_down = True
+
+    coordinator._schedule_reconnect_retry(1)
+
+    assert coordinator._reconnect_retry_task is None
+
+
+@pytest.mark.unit
+async def test_schedule_reconnect_retry_cancels_a_pending_retry(hass: HomeAssistant) -> None:
+    """Scheduling a retry replaces any retry already waiting."""
+    coordinator = _make_coordinator(hass)
+
+    coordinator._schedule_reconnect_retry(60)
+    first = coordinator._reconnect_retry_task
+    assert first is not None
+
+    coordinator._schedule_reconnect_retry(60)
+    second = coordinator._reconnect_retry_task
+
+    assert first.cancelled() or first.cancelling() > 0
+    assert second is not first
+
+    for task in (first, second):
+        if task is not None:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+
+
+@pytest.mark.unit
+async def test_retry_reconnect_waits_then_reconnects(hass: HomeAssistant) -> None:
+    """The retry task sleeps for the backoff delay before reconnecting."""
+    coordinator = _make_coordinator(hass)
+
+    with (
+        patch("asyncio.sleep", AsyncMock()) as sleep,
+        patch.object(coordinator, "_async_reconnect", AsyncMock()) as reconnect,
+    ):
+        await coordinator._async_retry_reconnect(7)
+
+    sleep.assert_awaited_once_with(7)
+    reconnect.assert_awaited_once()

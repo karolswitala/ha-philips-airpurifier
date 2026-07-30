@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
@@ -47,6 +48,10 @@ DEFAULT_NAME = "Philips AirPurifier"
 CONF_MODEL = "model"
 CONF_DEVICE_ID = "device_id"
 CONF_STATUS = "status"
+# Transport the device speaks, detected by the config flow and stored on the
+# entry. Absent on entries created before HTTP support existed, which are all
+# CoAP, so readers default to Protocol.COAP.
+CONF_PROTOCOL = "protocol"
 # MAC address captured during DHCP discovery. Stored so the device is registered
 # with a network-MAC connection, which lets the `registered_devices` DHCP matcher
 # re-discover the device and update its IP after a DHCP lease change. See issue #8.
@@ -56,6 +61,17 @@ CONF_MAC = "mac"
 # replacement repair, so it is not recreated on every coordinator update.
 # Reset automatically once a filter reads as freshly replaced. See issue #29.
 OPT_FILTER_WARNING_ACK = "filter_warning_acknowledged"
+
+
+class Protocol(StrEnum):
+    """Transport used to talk to the device."""
+
+    COAP = "coap"
+    HTTP = "http"
+
+
+# The legacy HTTP API cannot push, so HTTP entries poll on this interval.
+HTTP_POLL_INTERVAL = timedelta(seconds=30)
 
 SWITCH_ON = "on"
 TEST_ON = "on"

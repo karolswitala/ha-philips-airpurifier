@@ -13,6 +13,7 @@ from homeassistant.const import CONF_HOST, CONF_NAME, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 
 from .client import async_create_client
@@ -20,8 +21,10 @@ from .const import (
     CONF_DEVICE_ID,
     CONF_MAC,
     CONF_MODEL,
+    CONF_PROTOCOL,
     CONF_STATUS,
     DOMAIN,
+    Protocol,
 )
 from .coordinator import PhilipsAirPurifierCoordinator
 from .model import DeviceInformation
@@ -68,11 +71,21 @@ async def async_setup_entry(
     model = entry.data[CONF_MODEL]
     name = entry.data[CONF_NAME]
     device_id = entry.data[CONF_DEVICE_ID]
+    # Entries created before HTTP support existed carry no protocol and are CoAP.
+    protocol = Protocol(entry.data.get(CONF_PROTOCOL, Protocol.COAP))
 
-    _LOGGER.debug("async_setup_entry called for host %s", host)
+    _LOGGER.debug("async_setup_entry called for host %s using %s", host, protocol)
 
     try:
-        client = await async_create_client(host, timeout=25, create_client=CoAPClient.create)
+        if protocol is Protocol.HTTP:
+            client = await async_create_client(
+                host,
+                timeout=25,
+                protocol=protocol,
+                session=async_get_clientsession(hass),
+            )
+        else:
+            client = await async_create_client(host, timeout=25, create_client=CoAPClient.create)
         _LOGGER.debug("Got a valid client for host %s", host)
     except Exception as err:
         _LOGGER.warning("Failed to connect to host %s: %s", host, err)
@@ -87,7 +100,7 @@ async def async_setup_entry(
         device_id=device_id,
     )
 
-    coordinator = PhilipsAirPurifierCoordinator(hass, client, host, device_information)
+    coordinator = PhilipsAirPurifierCoordinator(hass, client, host, device_information, protocol)
 
     # Perform initial data refresh, then start CoAP observation
     await coordinator.async_first_refresh_and_observe()

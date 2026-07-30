@@ -8,9 +8,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.philips_airpurifier.const import (
+    CONF_PROTOCOL,
     CONF_STATUS,
     DOMAIN,
     OPT_FILTER_WARNING_ACK,
+    Protocol,
 )
 from custom_components.philips_airpurifier.repairs import (
     ConfigurationMigrationFlow,
@@ -18,6 +20,7 @@ from custom_components.philips_airpurifier.repairs import (
     DuplicateEntitiesFlow,
     EntityRegistryCleanupFlow,
     FilterReplacementWarningFlow,
+    _transport_kwargs,
     async_check_integration_health,
     async_create_fix_flow,
     async_create_issue,
@@ -663,3 +666,29 @@ async def test_check_health_deletes_entity_registry_cleanup_issue_when_clean(
     registry = ir.async_get(hass)
     issue = registry.async_get_issue(DOMAIN, "entity_registry_cleanup")
     assert issue is None
+
+
+# ---------------------------------------------------------------------------
+# Transport selection
+# ---------------------------------------------------------------------------
+
+
+async def test_transport_kwargs_uses_http_for_http_entries(hass: HomeAssistant) -> None:
+    """An HTTP entry is probed over HTTP, with Home Assistant's session."""
+    entry = MockConfigEntry(domain=DOMAIN, data={CONF_PROTOCOL: Protocol.HTTP})
+
+    kwargs = _transport_kwargs(hass, entry)
+
+    assert kwargs["protocol"] is Protocol.HTTP
+    assert kwargs["session"] is not None
+    assert "create_client" not in kwargs
+
+
+async def test_transport_kwargs_defaults_to_coap(hass: HomeAssistant) -> None:
+    """Entries predating HTTP support carry no protocol and stay on CoAP."""
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+
+    kwargs = _transport_kwargs(hass, entry)
+
+    assert "protocol" not in kwargs
+    assert kwargs["create_client"] is not None
