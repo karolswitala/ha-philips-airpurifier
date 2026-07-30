@@ -4,84 +4,160 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Home Assistant custom integration for Philips Air Purifiers. Domain: `philips_airpurifier_coap`. Supports 62+ device models across 3 API generations (Gen1, Gen2, Gen3), over two transports:
+Home Assistant custom integration for Philips air purifiers, humidifiers and fans.
+62 model entries across 3 API generations, over **two transports**:
 
-- **CoAP** (default) — via the `philips-airctrl` library. Local push.
-- **Legacy HTTP** (`/di/v1`) — for older firmware with no CoAP stack, e.g. AC2889/10 on firmware 14. Implemented in `http_client.py` because `philips-airctrl` has no HTTP transport. Local polling.
+- **CoAP** — via the `philips-airctrl` library. Local push, no update interval.
+- **Legacy HTTP** (`/di/v1`) — older firmware with no CoAP stack at all (e.g. AC2889/10 on
+  firmware 14). Implemented locally in `http_client.py` because `philips-airctrl` ships no HTTP
+  transport. Local polling every 30s.
 
-The config flow detects the transport and stores it on the config entry; entries without one are CoAP.
+The config flow probes CoAP first, falls back to HTTP, and stores the result as `CONF_PROTOCOL`
+on the config entry. **Entries without that key are CoAP** — that is how pre-HTTP entries keep
+working, so no migration exists or is needed.
+
+`DOMAIN = "philips_airpurifier"` (in `const.py`). Note that `AGENTS.md` and some docs still say
+`philips_airpurifier_coap`; they are wrong — trust `const.py`.
 
 ## Commands
 
 ```bash
-script/setup           # Install deps with uv, set up pre-commit hooks
-script/lint            # Format and lint with ruff (auto-fix)
-script/test            # Run pytest test suite: uv run pytest tests/
-script/develop         # Run Home Assistant with integration loaded (debug mode)
+./script/check       # type + lint + spell — run before committing
+./script/test        # pytest; --cov for coverage (must stay at 100%)
+./script/lint        # format and auto-fix all file types
+./script/develop     # run Home Assistant with the integration loaded, debug logging on
+./script/markdown    # format + lint Markdown (prettier + markdownlint)
+./script/hassfest    # Home Assistant manifest validation
 
-# Individual commands
-uv run ruff format .                          # Format only
-uv run ruff check . --fix                     # Lint only
-uv run pytest tests/ -k "test_name"           # Single test
-uv run pytest tests/ --cov --cov-report=term  # With coverage
-uv run mypy custom_components/                # Type checking (strict mode)
+./script/setup/setup # DevContainer bootstrap — note: script/setup is a DIRECTORY, not a script
 ```
+
+Underlying tools, if you need them directly:
+
+```bash
+uv sync --extra dev                           # create/refresh the venv
+uv run pytest tests/ -k "test_name"           # single test
+uv run pytest tests/ --cov --cov-report=term-missing
+uv run ruff format . && uv run ruff check . --fix
+uv run pyright custom_components/             # type checking — pyright, NOT mypy
+```
+
+`pyproject.toml` contains a `[tool.mypy]` block, but nothing runs it; `script/type-check` uses
+pyright and `pyrightconfig.json` is the live config.
 
 ## Architecture
 
-### Communication Pattern
+### Communication
 
-CoAP (no cloud, no polling):
+**CoAP** (`philips-airctrl`, no cloud, no polling):
 
-- **Local push** — `CoAPClient` from `philips-airctrl` handles encryption, sync, and observe
-- Coordinator uses `observe_status()` async iterator for real-time updates
-- Watchdog monitors connection health with automatic reconnection
+- `CoAPClient` handles encryption, the sync handshake, and observe
+- Coordinator consumes the `observe_status()` async iterator for real-time updates
+- A watchdog detects missed pushes and drives an exponential-backoff reconnect
+- Some firmware (CX7550, `AWS_Philips_AIR_Combo`) never answers a status read and only pushes on
+  a real state change; those models declare a `status_nudge` and the coordinator writes a
+  transient value to force the first push
 
-Legacy HTTP (no cloud, polls every `HTTP_POLL_INTERVAL`):
+**Legacy HTTP** (no cloud, polls on `HTTP_POLL_INTERVAL`):
 
-- Diffie-Hellman handshake yields an AES-128-CBC session key; every body is encrypted
-- Device state is spread across `/air`, `/fltsts`, `/firmware`, `/wifi` and `/upnp/description.xml`;
-  `HTTPClient.get_status()` merges them into the same shape the CoAP status has
-- No observe, no watchdog — `DataUpdateCoordinator` handles retries
+- Diffie-Hellman exchange against `/di/v1/products/0/security` yields an AES-128-CBC session key
+  (all-zero IV); every request and response body is encrypted
+- Device state is spread across `/air`, `/fltsts`, `/firmware`, `/wifi` and the _unencrypted_
+  `/upnp/description.xml`. `HTTPClient.get_status()` merges them and overlays the identity fields
+  (`DeviceId`, `modelid`, `name`, `swversion`, `type`) that the CoAP status carries inline but
+  the HTTP status does not — so the result has the same shape and the entity platforms need no
+  HTTP-specific handling
+- No observe, no watchdog, no nudge; `DataUpdateCoordinator` handles retries
+- The device silently invalidates the session key; the only recovery is redoing the handshake, so
+  reads and writes retry once with a fresh key (writes re-encrypt the body)
 
-### Key Files
+### Key files
 
-- `__init__.py` — Integration setup, icon system, platform forwarding
-- `coordinator.py` — `PhilipsAirPurifierCoordinator` (DataUpdateCoordinator): CoAP push observation or HTTP polling
-- `client.py` — Transport-dispatching helpers; CoAP-only nudge and device-info helpers
-- `http_client.py` — Legacy `/di/v1` HTTP transport (encryption, identity synthesis)
-- `config_flow.py` — DHCP auto-discovery + manual IP config, model and transport detection
-- `device_models.py` — 62+ per-model `DeviceModelConfig` entries (presets, speeds, available entities)
-- `const.py` — API field mappings for 3 generations, entity descriptions (sensor/switch/light/select/number types)
-- `model.py` — Type definitions, `DeviceInformation`, `ApiGeneration` enum, `DeviceModelConfig`
-- `entity.py` — Base entity class (WIP)
+| File               | Role                                                                                                      |
+| ------------------ | --------------------------------------------------------------------------------------------------------- |
+| `__init__.py`      | Setup, protocol selection, platform forwarding; `PhilipsAirPurifierConfigEntry` type                      |
+| `coordinator.py`   | `PhilipsAirPurifierCoordinator` — CoAP observe or HTTP polling                                            |
+| `client.py`        | Transport dispatch (`async_create_client`, `async_fetch_status`); CoAP-only nudge and device-info helpers |
+| `http_client.py`   | Legacy `/di/v1` transport: crypto, resource merge, identity synthesis                                     |
+| `config_flow.py`   | DHCP + manual setup, model matching, transport detection                                                  |
+| `device_models.py` | 62 `DeviceModelConfig` entries                                                                            |
+| `const.py`         | `PhilipsApi` field names for 3 generations, entity descriptions, `Protocol`, `CONF_*`                     |
+| `model.py`         | `DeviceInformation`, `ApiGeneration`, `DeviceModelConfig`                                                 |
+| `entity.py`        | `PhilipsAirPurifierEntity` base (CoordinatorEntity)                                                       |
+| `repairs.py`       | Repair flows; `_transport_kwargs()` picks the right transport per entry                                   |
 
-### Device Model System
+Platforms: binary_sensor, climate, event, fan, humidifier, light, number, select, sensor, switch.
 
-`device_models.py` maps each model to a `DeviceModelConfig` dataclass — capabilities, preset modes, speeds and available entities are declared as data, not through a class hierarchy. Lookup falls back from the exact model id, to the firmware-qualified name, to the six-character family.
+### Device model system
 
-Three API generations with different key formats:
+`device_models.py` maps each model to a `DeviceModelConfig` dataclass — capabilities, presets,
+speeds and available entities are **data, not a class hierarchy**. Lookup order: exact model id
+→ firmware-qualified name (`AC0850/11 AWS_Philips_AIR`) → six-character family (`AC2889`).
 
-- Gen1: simple keys (`pwr`, `mode`, `om`)
-- Gen2: `D01-XX`, `D03-XX` format
-- Gen3: `D01SXX`, `D03XXX` format
+Entities are created purely by **key presence** in `coordinator.data` (see `sensor.py`), which is
+why merging the HTTP resources into a CoAP-shaped dict was sufficient to support HTTP with zero
+platform changes.
 
-### Config Entry Pattern
+Three generations, different key formats:
 
-Uses `entry.runtime_data` typed as `PhilipsAirPurifierConfigEntry` to store the coordinator. Entity platforms access coordinator directly from the config entry.
+- Gen1: `pwr`, `mode`, `om`
+- Gen2: `D01-XX`, `D03-XX`
+- Gen3: `D01SXX`, `D03XXX`
 
-## Quality Scale Target
+### Config entry pattern
 
-Targeting **platinum** quality scale per Home Assistant integration standards. Key requirements:
+`entry.runtime_data` holds the coordinator, typed via `PhilipsAirPurifierConfigEntry`. Entity
+platforms read the coordinator straight off the config entry.
 
-- 100% test coverage (configured in pyproject.toml)
-- Strict mypy typing
-- Full compliance with HA integration quality scale rules
+## Upstream library rule
+
+**All CoAP communication must go through `philips-airctrl`** — no raw sockets, no alternate CoAP
+clients, no hand-rolled CoAP encryption. If a CoAP capability is missing, open an upstream issue
+rather than working around it.
+
+**The one exception is `http_client.py`.** `philips-airctrl` has no HTTP transport, so there is
+nothing upstream to call. Do not put HTTP protocol code anywhere else, and do not route CoAP
+through it. Full text: `.github/instructions/upstream_library.instructions.md`.
+
+## Testing
+
+- `pyproject.toml` sets `fail_under = 100`. **New code needs full coverage or CI fails.**
+- `tests/conftest.py` — `mock_coap_client`, `mock_coap_client_config_flow`, `init_integration`
+- `tests/const.py` — `MOCK_STATUS_GEN1` (CoAP) and the `MOCK_HTTP_*` / `MOCK_STATUS_HTTP`
+  fixtures, whose shapes are taken from a real AC2889 but with **synthetic identifiers** (public
+  repo — never commit a real MAC, device id or SSID)
+- `tests/test_http_client.py` drives a `FakeDevice` performing the **real** DH exchange and AES,
+  so the wire format is genuinely exercised. The `"AA"` two-byte body prefix is the easy thing to
+  break.
+- `tests/test_config_flow.py` has an autouse `_no_real_http_fallback` fixture. Every CoAP-failure
+  test now reaches the HTTP probe; without it they open real sockets, surfacing as _teardown_
+  errors rather than failures.
+
+**Mocked-green does not mean working.** `async_fetch_device_info` bounded only client creation,
+not the read, and hung forever against a real non-CoAP host while the suite stayed green, because
+the suite mocks that helper. Verify transport changes against hardware.
+
+## Quality scale target
+
+Targeting **platinum** per Home Assistant integration standards: 100% coverage, strict pyright,
+full quality-scale compliance. Progress is tracked in `quality_scale.yaml`.
 
 ## Conventions
 
-- Python 3.12+, line length 100, ruff for formatting/linting
-- Uses `uv` for dependency management
+- **Python 3.14+** (`requires-python = ">=3.14.2"`, ruff `target-version = "py314"`)
+- **Line length 120** (ruff)
+- `uv` for dependency management; pre-commit runs ruff, codespell, yamllint and prettier
 - Async throughout — all device communication is async
-- Entity platforms follow HA patterns: `async_setup_entry()` → create entities → `async_add_entities()`
-- Translations in `translations/` directory (en, de, bg, etc.)
+- Platforms follow `async_setup_entry()` → build entities → `async_add_entities()`
+- Translations in `translations/`: bg, de, en, nl, ro, sk
+- User-visible strings live in `strings.json` and must be mirrored into the translations
+
+## Known drift and rough edges
+
+- `AGENTS.md` refers to a "CRITICAL: Upstream Library Rules" section it does not contain, and
+  both it and older docs give the domain as `philips_airpurifier_coap`.
+- `coordinator.py` guards `self.data is not None` twice with a pyright suppression: Home
+  Assistant types `DataUpdateCoordinator.data` as non-Optional, but it genuinely is `None` before
+  the first refresh, so those guards are load-bearing — do not "simplify" them away.
+- `.ai-scratch/` is **tracked**, despite the name. Anything left there ships.
+- `script/check` stops at the shell step if `shellcheck` is not installed.
