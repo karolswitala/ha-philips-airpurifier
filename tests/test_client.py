@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -198,4 +199,28 @@ async def test_fetch_status_over_http_shuts_the_client_down() -> None:
 
     assert status == {"pwr": "1"}
     client.get_status.assert_awaited_once_with(observe=False)
+    client.shutdown.assert_awaited_once()
+
+
+async def test_async_fetch_device_info_bounds_the_read() -> None:
+    """A host with no CoAP stack must not hang the caller forever.
+
+    Creating the client with ``sync=False`` performs no network I/O and returns
+    immediately, so bounding only the creation guarded nothing: the read goes
+    out with aiocoap's ``Unreliable`` transport tuning, which neither
+    retransmits nor gives up. Against the AC2889 this hung indefinitely and the
+    config flow never reached its HTTP fallback.
+    """
+    client = MagicMock()
+    never_answers = asyncio.Event()
+    client.get_device_info = AsyncMock(side_effect=never_answers.wait)
+    client.shutdown = AsyncMock()
+
+    with pytest.raises(TimeoutError):
+        await async_fetch_device_info(
+            "1.2.3.4",
+            timeout=0.01,
+            create_client=AsyncMock(return_value=client),
+        )
+
     client.shutdown.assert_awaited_once()

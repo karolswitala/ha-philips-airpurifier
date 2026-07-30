@@ -94,11 +94,17 @@ async def async_fetch_device_info(
     which is required for push-only firmware that never answers the
     ``sys/dev/status`` read, so this identifies a device whose status cannot be
     read directly.
+
+    ``timeout`` bounds the read as well as the client creation. Creating with
+    ``sync=False`` performs no network I/O and so returns immediately, meaning a
+    timeout on creation alone guards nothing: the read is sent with aiocoap's
+    ``Unreliable`` transport tuning, which neither retransmits nor gives up, so
+    against a host with no CoAP stack an unbounded read simply never returns.
     """
     creator = create_client or CoAPClient.create
     client = await asyncio.wait_for(creator(host, sync=False), timeout=timeout)
     try:
-        return await client.get_device_info()
+        return await asyncio.wait_for(client.get_device_info(), timeout=timeout)
     finally:
         with contextlib.suppress(Exception):
             await client.shutdown()
