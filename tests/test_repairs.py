@@ -692,3 +692,62 @@ async def test_transport_kwargs_defaults_to_coap(hass: HomeAssistant) -> None:
 
     assert "protocol" not in kwargs
     assert kwargs["create_client"] is not None
+
+
+async def test_check_health_http_filter_uses_nominal_capacity(hass: HomeAssistant) -> None:
+    """Test a filter with no device-reported total is judged against its nominal capacity."""
+    coordinator = MagicMock()
+    coordinator.client = MagicMock()
+    coordinator.host = "192.168.1.91"
+    # 500 of a nominal 4800 hours is under the 15% threshold.
+    coordinator.data = {"fltsts1": 500, "fltt1": "A3"}
+
+    await async_check_integration_health(hass, coordinator)
+
+    registry = ir.async_get(hass)
+    assert registry.async_get_issue(DOMAIN, "filter_replacement_warning") is not None
+
+
+async def test_check_health_http_filter_healthy_against_nominal(hass: HomeAssistant) -> None:
+    """Test a healthy filter does not warn when judged against its nominal capacity."""
+    coordinator = MagicMock()
+    coordinator.client = MagicMock()
+    coordinator.host = "192.168.1.91"
+    coordinator.data = {"fltsts1": 4000, "fltt1": "A3"}
+
+    await async_check_integration_health(hass, coordinator)
+
+    registry = ir.async_get(hass)
+    assert registry.async_get_issue(DOMAIN, "filter_replacement_warning") is None
+
+
+async def test_check_health_exhausted_filter_without_capacity_warns(hass: HomeAssistant) -> None:
+    """Test an exhausted filter warns even when no capacity is known at all.
+
+    A real AC2889/10 on firmware 14 reports ``fltsts2: 0`` with no total and an
+    unrecognised type code; zero unambiguously means the filter needs attention.
+    """
+    coordinator = MagicMock()
+    coordinator.client = MagicMock()
+    coordinator.host = "192.168.1.91"
+    coordinator.data = {"fltsts2": 0, "fltt2": "ZZ"}
+
+    await async_check_integration_health(hass, coordinator)
+
+    registry = ir.async_get(hass)
+    assert registry.async_get_issue(DOMAIN, "filter_replacement_warning") is not None
+
+
+async def test_check_health_unknown_capacity_healthy_filter_does_not_warn(
+    hass: HomeAssistant,
+) -> None:
+    """Test a non-zero filter with no known capacity stays silent rather than guessing."""
+    coordinator = MagicMock()
+    coordinator.client = MagicMock()
+    coordinator.host = "192.168.1.91"
+    coordinator.data = {"fltsts2": 1620, "fltt2": "ZZ"}
+
+    await async_check_integration_health(hass, coordinator)
+
+    registry = ir.async_get(hass)
+    assert registry.async_get_issue(DOMAIN, "filter_replacement_warning") is None

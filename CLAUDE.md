@@ -159,5 +159,18 @@ full quality-scale compliance. Progress is tracked in `quality_scale.yaml`.
 - `coordinator.py` guards `self.data is not None` twice with a pyright suppression: Home
   Assistant types `DataUpdateCoordinator.data` as non-Optional, but it genuinely is `None` before
   the first refresh, so those guards are load-bearing — do not "simplify" them away.
-- `.ai-scratch/` is **tracked**, despite the name. Anything left there ships.
+- `.ai-scratch/` holds working notes. Only `.gitkeep` is tracked and the directory is
+  **not** gitignored, so anything left there ships if you `git add -A`.
 - `script/check` stops at the shell step if `shellcheck` is not installed.
+- **`./script/develop` can break `cffi` in the venv.** Home Assistant installs integration
+  requirements into the same venv while booting, and that can leave the `cffi` package and the
+  compiled `_cffi_backend` extension on different versions. `cryptography` then fails to import,
+  which fails `config_flow.py`, and Home Assistant reports **`Invalid handler specified`** when
+  you try to add the integration — a symptom that looks nothing like the cause. Confirm with
+  `python -c "import cffi, _cffi_backend; print(cffi.__version__, _cffi_backend.__version__)"`
+  and fix with `uv pip install --reinstall cffi`.
+- **Filter capacity is not universal.** CoAP devices report `flttotal*`; the legacy HTTP API
+  does not, and no endpoint on an AC2889/10 (firmware 14) exposes it. `resolve_filter_capacity()`
+  in `helpers.py` is the single place that resolves this — device value first, then the nominal
+  lifetime tables in `const.py`. Those nominal hours come from Philips' published replacement
+  intervals and are **not** verified against hardware; correct them there if a device disagrees.

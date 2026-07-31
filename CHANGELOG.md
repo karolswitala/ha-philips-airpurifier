@@ -33,6 +33,14 @@ and this project adheres to [Calendar Versioning](https://calver.org/) (`YYYY.MM
 
 - Devices reporting no `WifiVersion` (all legacy HTTP firmware) no longer raise
   `AttributeError` during the config flow before model matching runs.
+- Filter life is reported for devices on the legacy HTTP API. That API carries
+  no `flttotal*` capacity field, so the filter replacement warning could never
+  fire and `filter_reset` silently did nothing — an AC2889/10 reporting an
+  exhausted pre-filter (`fltsts0: 0`) surfaced no warning at all. Capacity now
+  falls back to the filter type's nominal lifetime when the device reports
+  none, and a filter that reads zero warns even when no capacity is known.
+  A capacity reported by the device is still always preferred, so CoAP
+  behaviour is unchanged.
 
 ## [2026.6.3] - 2026-06-27
 

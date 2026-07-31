@@ -1,6 +1,10 @@
 """Tests for helpers module."""
 
-from custom_components.philips_airpurifier.helpers import extract_model, extract_name
+from custom_components.philips_airpurifier.helpers import (
+    extract_model,
+    extract_name,
+    resolve_filter_capacity,
+)
 
 
 class TestExtractName:
@@ -168,3 +172,46 @@ class TestExtractModel:
         """Test extracting model with special characters."""
         status = {"modelid": "AC-3858/51"}
         assert extract_model(status) == "AC-3858/5"
+
+
+class TestResolveFilterCapacity:
+    """Test resolve_filter_capacity function."""
+
+    def test_unknown_status_key(self) -> None:
+        """Test a key that is not a known filter returns None."""
+        assert resolve_filter_capacity({"nonsense": 1}, "nonsense") is None
+
+    def test_device_reported_total_wins(self) -> None:
+        """Test a capacity reported by the device is preferred over the nominal one."""
+        status = {"fltsts1": 100, "flttotal1": 1234, "fltt1": "A3"}
+        assert resolve_filter_capacity(status, "fltsts1") == 1234
+
+    def test_device_reported_zero_total_is_not_replaced(self) -> None:
+        """Test a device that reports a zero capacity is trusted, not overridden."""
+        status = {"fltsts1": 100, "flttotal1": 0, "fltt1": "A3"}
+        assert resolve_filter_capacity(status, "fltsts1") is None
+
+    def test_falls_back_to_nominal_for_known_type(self) -> None:
+        """Test the nominal lifetime is used when the device reports no total."""
+        status = {"fltsts1": 1620, "fltt1": "A3"}
+        assert resolve_filter_capacity(status, "fltsts1") == 4800
+
+    def test_unknown_filter_type_has_no_capacity(self) -> None:
+        """Test an unrecognised filter type code yields no capacity."""
+        status = {"fltsts1": 1620, "fltt1": "ZZ"}
+        assert resolve_filter_capacity(status, "fltsts1") is None
+
+    def test_non_string_filter_type_is_ignored(self) -> None:
+        """Test a malformed type code does not raise."""
+        status = {"fltsts1": 1620, "fltt1": 3}
+        assert resolve_filter_capacity(status, "fltsts1") is None
+
+    def test_pre_filter_falls_back_to_per_key_default(self) -> None:
+        """Test the pre-filter uses its per-field default, having no type code."""
+        status = {"fltsts0": 0}
+        assert resolve_filter_capacity(status, "fltsts0") == 360
+
+    def test_filter_without_type_key_or_default(self) -> None:
+        """Test a filter with neither a type code nor a default yields None."""
+        status = {"fltsts2": 1620}
+        assert resolve_filter_capacity(status, "fltsts2") is None

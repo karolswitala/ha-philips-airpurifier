@@ -180,9 +180,13 @@ async def test_reset_filter_counters_all_filters() -> None:
     """Test resetting all filter counters writes totals when known."""
     coordinator = AsyncMock()
     coordinator.data = {
+        "fltsts0": 10,
         "flttotal0": 100,
+        "fltsts1": 20,
         "flttotal1": 200,
+        "fltsts2": 30,
         "flttotal2": 300,
+        "D05-14": 40,
         "D05-08": 400,
     }
 
@@ -208,7 +212,7 @@ async def test_reset_filter_counters_unknown_filter_raises() -> None:
 async def test_reset_filter_counters_zero_capacity_skips_call() -> None:
     """Test filter reset skips when total capacity is zero."""
     coordinator = AsyncMock()
-    coordinator.data = {"flttotal0": 0}
+    coordinator.data = {"fltsts0": 5, "flttotal0": 0}
 
     await _reset_filter_counters(coordinator, "pre_filter")
 
@@ -316,3 +320,40 @@ async def test_get_coordinator_from_entity_wrong_domain(
     )
 
     assert _get_coordinator_from_entity_id(hass, "light.other_light") is None
+
+
+async def test_reset_filter_counters_skips_filter_device_does_not_report() -> None:
+    """Test filters the device does not report at all are left alone.
+
+    Without this guard the nominal capacity would be written to a device that
+    has no such filter.
+    """
+    coordinator = AsyncMock()
+    coordinator.data = {"fltsts1": 100, "flttotal1": 200}
+
+    await _reset_filter_counters(coordinator, "pre_filter")
+
+    coordinator.async_set_control_value.assert_not_awaited()
+
+
+async def test_reset_filter_counters_uses_nominal_capacity_over_http() -> None:
+    """Test a filter with no device-reported total resets to its nominal capacity."""
+    coordinator = AsyncMock()
+    coordinator.data = {"fltsts1": 1620, "fltt1": "A3"}
+
+    await _reset_filter_counters(coordinator, "hepa_filter")
+
+    coordinator.async_set_control_value.assert_awaited_once_with("fltsts1", 4800)
+
+
+async def test_reset_filter_counters_warns_when_capacity_unknown(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test an unknown filter type is reported rather than silently skipped."""
+    coordinator = AsyncMock()
+    coordinator.data = {"fltsts1": 1620, "fltt1": "ZZ"}
+
+    await _reset_filter_counters(coordinator, "hepa_filter")
+
+    coordinator.async_set_control_value.assert_not_awaited()
+    assert "no capacity" in caplog.text

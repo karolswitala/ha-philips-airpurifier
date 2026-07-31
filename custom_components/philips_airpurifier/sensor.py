@@ -17,6 +17,7 @@ from homeassistant.const import (
 
 from .const import FILTER_TYPES, SENSOR_TYPES, FanAttributes
 from .entity import PhilipsAirPurifierEntity
+from .helpers import resolve_filter_capacity
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -139,19 +140,15 @@ class PhilipsFilterSensor(PhilipsAirPurifierEntity, SensorEntity):
 
     @property
     def _has_total(self) -> bool:
-        return self._total_key in (self._device_status or {})
+        return self._total is not None
 
     @property
     def _value(self) -> int:
         return self._device_status[self._value_key]
 
     @property
-    def _total(self) -> int:
-        return self._device_status[self._total_key]
-
-    @property
-    def _percentage(self) -> float:
-        return round(100.0 * self._value / self._total)
+    def _total(self) -> int | None:
+        return resolve_filter_capacity(self._device_status or {}, self._value_key)
 
     @property
     def _time_remaining(self) -> str:
@@ -160,8 +157,9 @@ class PhilipsFilterSensor(PhilipsAirPurifierEntity, SensorEntity):
     @property
     def native_value(self) -> StateType:
         """Return the native value of the filter sensor."""
-        if self._has_total:
-            return self._percentage
+        total = self._total
+        if total is not None:
+            return round(100.0 * self._value / total)
         return self._time_remaining
 
     @property
@@ -174,8 +172,8 @@ class PhilipsFilterSensor(PhilipsAirPurifierEntity, SensorEntity):
             if filter_type:
                 attrs["Filter Type"] = filter_type
 
-        if self._has_total:
-            total_hours = self._total
+        total_hours = self._total
+        if total_hours is not None:
             remaining_hours = self._value
             percentage = round(100.0 * remaining_hours / total_hours)
 

@@ -769,6 +769,30 @@ BINARY_SENSOR_TYPES: dict[str, SensorDescription] = {
     },
 }
 
+# Nominal filter lifetimes in hours.
+#
+# CoAP devices report their own capacity in a ``flttotal*`` field, and that
+# value always wins. The legacy HTTP (``/di/v1``) API carries no such field --
+# confirmed against an AC2889/10 on firmware 14, whose ``/fltsts`` resource
+# holds only ``fltsts0/1/2`` and the ``fltt1``/``fltt2`` type codes -- so for
+# those devices a capacity can only come from a table like this one.
+#
+# Keyed by the filter type code the device reports. These are Philips'
+# published replacement intervals, NOT values read from a device; a filter
+# whose code is absent here simply has no known capacity, which callers must
+# handle. Correct them here if a device proves them wrong.
+FILTER_CAPACITY_BY_TYPE: dict[str, int] = {
+    "A3": 4800,  # NanoProtect S3 HEPA (FY2422)
+    "C7": 4800,  # NanoProtect active carbon (FY2420)
+}
+
+# Fallback capacities for filters that report no type code at all. The
+# pre-filter is washable rather than replaceable and no HTTP device seen so far
+# reports ``fltt0``, so it needs an entry keyed by status field instead.
+FILTER_CAPACITY_BY_KEY: dict[str, int] = {
+    PhilipsApi.FILTER_PRE: 360,
+}
+
 FILTER_TYPES: dict[str, FilterDescription] = {
     PhilipsApi.FILTER_PRE: {
         FanAttributes.ICON_MAP: {0: "mdi:air-filter", 72: "mdi:dots-grid"},

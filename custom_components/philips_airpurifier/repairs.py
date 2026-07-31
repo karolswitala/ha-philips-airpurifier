@@ -15,7 +15,8 @@ from homeassistant.helpers import device_registry as dr, entity_registry as er, 
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .client import async_fetch_status
-from .const import CONF_PROTOCOL, CONF_STATUS, DOMAIN, OPT_FILTER_WARNING_ACK, Protocol
+from .const import CONF_PROTOCOL, CONF_STATUS, DOMAIN, OPT_FILTER_WARNING_ACK, PhilipsApi, Protocol
+from .helpers import resolve_filter_capacity
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -414,21 +415,29 @@ async def async_check_integration_health(
 
     # Check various filter types
     filter_keys = [
-        ("fltsts0", "flttotal0"),  # Pre-filter
-        ("fltsts1", "flttotal1"),  # HEPA filter
-        ("fltsts2", "flttotal2"),  # Active carbon filter
-        ("D05-14", "D05-08"),  # NanoProtect filter
+        PhilipsApi.FILTER_PRE,
+        PhilipsApi.FILTER_HEPA,
+        PhilipsApi.FILTER_ACTIVE_CARBON,
+        PhilipsApi.FILTER_NANOPROTECT,
     ]
 
-    for status_key, total_key in filter_keys:
-        if status_key in status and total_key in status:
-            remaining = status[status_key]
-            total = status[total_key]
-            if total > 0:
-                percentage = (remaining / total) * 100
-                if percentage <= 15:  # Less than 15% remaining
-                    filter_warning_needed = True
-                    break
+    for status_key in filter_keys:
+        if status_key not in status:
+            continue
+        remaining = status[status_key]
+        capacity = resolve_filter_capacity(status, status_key)
+        if capacity is None:
+            # No capacity for this filter, from the device or the nominal
+            # table. A count of zero still unambiguously means "replace or
+            # clean now", so warn on that alone rather than staying silent.
+            if remaining <= 0:
+                filter_warning_needed = True
+                break
+            continue
+        percentage = (remaining / capacity) * 100
+        if percentage <= 15:  # Less than 15% remaining
+            filter_warning_needed = True
+            break
 
     # Locate the config entry for this coordinator so the warning can be
     # acknowledged persistently and reset once a filter is replaced (issue #29).

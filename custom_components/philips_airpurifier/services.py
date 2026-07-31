@@ -13,6 +13,7 @@ from homeassistant.helpers import config_validation as cv, entity_registry as er
 from homeassistant.helpers.service import async_extract_entity_ids
 
 from .const import DOMAIN, PhilipsApi
+from .helpers import resolve_filter_capacity
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant, ServiceCall
@@ -154,10 +155,10 @@ async def _reset_filter_counters(
 ) -> None:
     """Reset filter life counters."""
     filter_mappings = {
-        "pre_filter": ("fltsts0", "flttotal0"),
-        "hepa_filter": ("fltsts1", "flttotal1"),
-        "active_carbon_filter": ("fltsts2", "flttotal2"),
-        "nanoprotect_filter": ("D05-14", "D05-08"),
+        "pre_filter": "fltsts0",
+        "hepa_filter": "fltsts1",
+        "active_carbon_filter": "fltsts2",
+        "nanoprotect_filter": "D05-14",
     }
 
     if filter_type == "all":
@@ -170,10 +171,18 @@ async def _reset_filter_counters(
 
     status = coordinator.data or {}
 
-    for status_key, total_key in filters_to_reset:
-        total_capacity = status.get(total_key, 0)
-        if total_capacity > 0:
-            await coordinator.async_set_control_value(status_key, total_capacity)
-            _LOGGER.info("Reset filter %s to full capacity (%s)", status_key, total_capacity)
-        else:
-            _LOGGER.warning("Could not reset filter %s: total capacity unknown", status_key)
+    for status_key in filters_to_reset:
+        if status_key not in status:
+            continue
+        # Devices on the legacy HTTP API report no capacity, so this falls back
+        # to the nominal lifetime for the filter type. Without either there is
+        # no correct value to write, so skip rather than guess.
+        total_capacity = resolve_filter_capacity(status, status_key)
+        if total_capacity is None:
+            _LOGGER.warning(
+                "Cannot reset filter %s: the device reports no capacity for it and none is known",
+                status_key,
+            )
+            continue
+        await coordinator.async_set_control_value(status_key, total_capacity)
+        _LOGGER.info("Reset filter %s to full capacity (%s)", status_key, total_capacity)
