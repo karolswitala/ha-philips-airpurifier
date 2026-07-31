@@ -5,7 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Calendar Versioning](https://calver.org/) (`YYYY.MM.PATCH`).
 
-## [Unreleased]
+## [2026.7.0] - 2026-07-31
+
+First release of the fork at
+[karolswitala/ha-philips-airpurifier](https://github.com/karolswitala/ha-philips-airpurifier),
+which adds the legacy HTTP transport. Everything below is relative to upstream `2026.6.3`.
 
 ### Added
 
@@ -41,6 +45,23 @@ and this project adheres to [Calendar Versioning](https://calver.org/) (`YYYY.MM
   none, and a filter that reads zero warns even when no capacity is known.
   A capacity reported by the device is still always preferred, so CoAP
   behaviour is unchanged.
+- The CoAP device-info read during setup is now bounded by a timeout, so
+  probing a host that has no CoAP stack can no longer hang indefinitely.
+
+### Changed
+
+- The integration is now named **"Philips AirPurifier (with CoAP and HTTP)"**
+  to distinguish it from upstream. The domain is unchanged
+  (`philips_airpurifier`), so it installs over an upstream installation —
+  remove the upstream integration from HACS first, or HACS will revert it.
+- Filter sensors on devices using the legacy HTTP API report **percent**
+  rather than hours, since capacity now resolves to a nominal lifetime. The
+  nominal values are Philips' published replacement intervals and are not
+  verified against hardware.
+- README documents the fork, its installation path, and the HTTP behaviour a
+  user can observe: the percentage-based filter sensors, the single
+  `Failed to connect to host` warning absorbed by retry during setup, and the
+  fact that the `coap` and `philips_airctrl` loggers stay silent over HTTP.
 
 ## [2026.6.3] - 2026-06-27
 
@@ -132,6 +153,8 @@ Latest release prior to this changelog being introduced. See the
 [GitHub releases](https://github.com/ruaan-deysel/ha-philips-airpurifier/releases)
 for the history of earlier versions.
 
-[Unreleased]: https://github.com/ruaan-deysel/ha-philips-airpurifier/compare/v2026.6.1...HEAD
+[2026.7.0]: https://github.com/karolswitala/ha-philips-airpurifier/releases/tag/v2026.7.0
+[2026.6.3]: https://github.com/ruaan-deysel/ha-philips-airpurifier/releases/tag/v2026.6.3
+[2026.6.2]: https://github.com/ruaan-deysel/ha-philips-airpurifier/compare/v2026.6.1...v2026.6.2
 [2026.6.1]: https://github.com/ruaan-deysel/ha-philips-airpurifier/compare/v2026.6.0...v2026.6.1
 [2026.6.0]: https://github.com/ruaan-deysel/ha-philips-airpurifier/releases/tag/v2026.6.0
