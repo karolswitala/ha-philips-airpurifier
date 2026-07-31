@@ -23,7 +23,17 @@
 [issues_shield]: https://img.shields.io/github/issues/ruaan-deysel/ha-philips-airpurifier?style=flat-square&color=red
 [issues_link]: https://github.com/ruaan-deysel/ha-philips-airpurifier/issues
 
-A comprehensive **Local Push** integration for Philips air purifiers and humidifiers in Home Assistant. This integration provides complete control over your Philips air quality devices using the encrypted CoAP protocol for local communication.
+> **⚡ This is a fork that adds HTTP support**
+>
+> This repository is a fork of [ruaan-deysel/ha-philips-airpurifier](https://github.com/ruaan-deysel/ha-philips-airpurifier), which speaks only **CoAP**.
+>
+> Older Philips firmware has no CoAP stack at all — an AC2889/10 on firmware `14`, for example, answers nothing on UDP 5683. Those devices simply could not be added. This fork adds the **legacy HTTP (`/di/v1`) API** as a second transport, so they can be.
+>
+> The config flow probes CoAP first and falls back to HTTP automatically; there is nothing to configure. CoAP devices behave exactly as before, keeping their push updates. HTTP devices poll every 30 seconds, because that API cannot push.
+>
+> **The domain is unchanged (`philips_airpurifier`), so this fork installs to the same directory as upstream.** If you have the upstream integration installed via HACS, remove it before installing this one — otherwise HACS will periodically "update" you back to upstream and silently revert HTTP support.
+
+A comprehensive **Local Push** integration for Philips air purifiers and humidifiers in Home Assistant. This integration provides complete control over your Philips air quality devices over two local transports: the encrypted CoAP protocol, and the legacy HTTP API used by older firmware.
 
 ## Table of Contents
 
@@ -74,7 +84,9 @@ This integration includes automatic reconnection attempts, but they may not alwa
 
 1. **Add Repository**: Click the button below to add this repository to HACS:
 
-   [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=ruaan-deysel&repository=ha-philips-airpurifier&category=integration)
+   [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=karolswitala&repository=ha-philips-airpurifier&category=integration)
+
+   Or add `https://github.com/karolswitala/ha-philips-airpurifier` manually via HACS → **⋮** → **Custom repositories**, with type **Integration**. This fork is not in the HACS default store, so it must be added as a custom repository.
 
 2. **Install**: Search for "Philips AirPurifier (with CoAP and HTTP)" in HACS and install it
 3. **Restart**: Restart Home Assistant
@@ -82,7 +94,7 @@ This integration includes automatic reconnection attempts, but they may not alwa
 
 ### Manual Installation
 
-1. **Download**: Download the latest release from the [releases page](https://github.com/ruaan-deysel/ha-philips-airpurifier/releases)
+1. **Download**: Download this fork from its [default branch](https://github.com/karolswitala/ha-philips-airpurifier/archive/refs/heads/main.zip). Do not use the upstream releases page — those builds are CoAP-only and do not include HTTP support.
 2. **Extract**: Extract the `custom_components/philips_airpurifier` folder to your Home Assistant `custom_components` directory
 3. **Restart**: Restart Home Assistant
 4. **Configure**: Follow the [Configuration](#️-configuration) steps below
