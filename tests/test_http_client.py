@@ -12,6 +12,7 @@ import base64
 import json
 import secrets
 from typing import TYPE_CHECKING, Any
+from unittest.mock import patch
 
 from Cryptodome.Cipher import AES
 from Cryptodome.Util.Padding import pad, unpad
@@ -20,6 +21,8 @@ from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClien
 
 from custom_components.philips_airpurifier.const import PhilipsApi
 from custom_components.philips_airpurifier.http_client import (
+    _HANDSHAKE_ATTEMPTS,
+    _HANDSHAKE_RETRY_DELAY,
     ATTR_MAC,
     FILTERS_PATH,
     FIRMWARE_PATH,
@@ -81,6 +84,9 @@ class FakeDevice:
         # When set, the next N encrypted requests fail, simulating the device
         # having silently invalidated the session key.
         self.fail_next = 0
+        # When set, the next N handshakes fail, simulating the device ignoring
+        # the first key exchange offered to it after an idle spell.
+        self.fail_next_handshakes = 0
         self.upnp = MOCK_HTTP_UPNP
         self.resources: dict[str, dict[str, Any]] = {
             STATUS_PATH: dict(MOCK_HTTP_AIR),
@@ -105,6 +111,9 @@ class FakeDevice:
     async def _handle_security(self, method: str, url: Any, data: Any) -> AiohttpClientMockResponse:
         """Complete the Diffie-Hellman exchange and hand back the session key."""
         self.handshakes += 1
+        if self.fail_next_handshakes > 0:
+            self.fail_next_handshakes -= 1
+            raise TimeoutError
         client_public = int(json.loads(data)["diffie"], 16)
         private = secrets.randbits(256)
         public = pow(_G, private, _P)
@@ -214,6 +223,42 @@ async def test_create_performs_handshake_and_reads_identity(
     assert info[PhilipsApi.SOFTWARE_VERSION] == "14"
     assert info[PhilipsApi.TYPE] == "AC2889"
     assert info[ATTR_MAC] == TEST_HTTP_MAC
+
+
+async def test_create_retries_a_handshake_the_device_ignores(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """A first handshake the device ignores is retried instead of failing setup.
+
+    This is the failure seen on real hardware: adding the device timed out on
+    the first key exchange and only succeeded on Home Assistant's retry.
+    """
+    device = FakeDevice()
+    device.fail_next_handshakes = 1
+
+    with patch("custom_components.philips_airpurifier.http_client.asyncio.sleep") as sleep:
+        client = await _connect(hass, device, aioclient_mock)
+
+    assert device.handshakes == 2
+    sleep.assert_awaited_once_with(_HANDSHAKE_RETRY_DELAY)
+    info = await client.get_device_info()
+    assert info[PhilipsApi.MODEL_ID] == TEST_HTTP_MODEL
+
+
+async def test_create_surfaces_a_handshake_that_never_answers(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """When every attempt fails the error reaches the caller."""
+    device = FakeDevice()
+    device.fail_next_handshakes = _HANDSHAKE_ATTEMPTS
+
+    with (
+        patch("custom_components.philips_airpurifier.http_client.asyncio.sleep"),
+        pytest.raises(TimeoutError),
+    ):
+        await _connect(hass, device, aioclient_mock)
+
+    assert device.handshakes == _HANDSHAKE_ATTEMPTS
 
 
 async def test_get_status_merges_resources_and_identity(

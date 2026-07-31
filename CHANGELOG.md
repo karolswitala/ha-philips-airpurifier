@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Calendar Versioning](https://calver.org/) (`YYYY.MM.PATCH`).
 
+## [Unreleased]
+
+### Fixed
+
+- Connecting to a device over the legacy HTTP API now retries the Diffie-Hellman
+  handshake once before reporting failure. The device ignores the first
+  handshake offered to it after an idle spell, so adding an entry logged a
+  connection warning and relied on Home Assistant's retry five seconds later.
+
 ## [2026.7.0] - 2026-07-31
 
 First release of the fork at
@@ -153,6 +162,7 @@ Latest release prior to this changelog being introduced. See the
 [GitHub releases](https://github.com/ruaan-deysel/ha-philips-airpurifier/releases)
 for the history of earlier versions.
 
+[Unreleased]: https://github.com/karolswitala/ha-philips-airpurifier/compare/v2026.7.0...HEAD
 [2026.7.0]: https://github.com/karolswitala/ha-philips-airpurifier/releases/tag/v2026.7.0
 [2026.6.3]: https://github.com/ruaan-deysel/ha-philips-airpurifier/releases/tag/v2026.6.3
 [2026.6.2]: https://github.com/ruaan-deysel/ha-philips-airpurifier/compare/v2026.6.1...v2026.6.2

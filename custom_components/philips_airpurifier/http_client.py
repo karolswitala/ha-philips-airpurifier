@@ -18,6 +18,7 @@ CoAP status carries inline but the HTTP status does not.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -68,6 +69,13 @@ UPNP_NAMESPACE = {"upnp": "urn:schemas-upnp-org:device-1-0"}
 ATTR_MAC = "macaddress"
 
 _REQUEST_TIMEOUT = ClientTimeout(total=10)
+
+# The device regularly ignores the first handshake offered to it after an idle
+# spell, so connecting makes more than one attempt. Two attempts and a short
+# pause stay well inside the 25-second budget the callers in ``client.py``
+# allow for creating a client, even if both attempts time out.
+_HANDSHAKE_ATTEMPTS = 2
+_HANDSHAKE_RETRY_DELAY = 1.0
 
 
 def _aes_decrypt(data: bytes, key: bytes) -> bytes:
@@ -123,7 +131,7 @@ class HTTPClient:
     async def create(cls, host: str, session: ClientSession) -> HTTPClient:
         """Connect to a host: exchange a session key and read device identity."""
         client = cls(host, session)
-        await client._async_exchange_key()
+        await client._async_connect_key()
         client._identity = await client._async_fetch_identity()
         return client
 
@@ -155,6 +163,32 @@ class HTTPClient:
         shared_bytes = shared.to_bytes(128, byteorder="big")[:16]
         self._session_key = _aes_decrypt(bytes.fromhex(exchange["key"]), shared_bytes)[:16]
         return self._session_key
+
+    async def _async_connect_key(self) -> bytes:
+        """Run the first handshake of a session, retrying before giving up.
+
+        Adding a device would otherwise log a connection failure on every setup:
+        the first handshake after the config flow's probes hits
+        ``_REQUEST_TIMEOUT`` with no response at all, while the retry Home
+        Assistant schedules five seconds later completes in under two. The
+        device appears to need a moment between sessions, so waiting and asking
+        again is the whole fix. Only connecting retries -- once a session is
+        running, ``_async_get`` and ``_async_write`` already renew the key when
+        the device drops it.
+        """
+        for _ in range(_HANDSHAKE_ATTEMPTS - 1):
+            try:
+                return await self._async_exchange_key()
+            except Exception as ex:  # noqa: BLE001
+                _LOGGER.debug(
+                    "Handshake with %s failed (%s); retrying in %s seconds",
+                    self.host,
+                    ex,
+                    _HANDSHAKE_RETRY_DELAY,
+                )
+                await asyncio.sleep(_HANDSHAKE_RETRY_DELAY)
+        # The final attempt surfaces its failure to the caller.
+        return await self._async_exchange_key()
 
     def _key(self) -> bytes:
         """Return the current session key."""
