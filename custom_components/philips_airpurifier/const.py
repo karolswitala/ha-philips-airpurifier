@@ -43,7 +43,7 @@ DATA_KEY_CLIENT = "client"
 DATA_KEY_COORDINATOR = "coordinator"
 DATA_KEY_FAN = "fan"
 
-DEFAULT_NAME = "Philips AirPurifier"
+DEFAULT_NAME = "Philips AirPurifier (with CoAP and HTTP)"
 
 CONF_MODEL = "model"
 CONF_DEVICE_ID = "device_id"

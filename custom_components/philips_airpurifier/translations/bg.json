@@ -1,5 +1,5 @@
 {
-  "title": "Philips Пречиствател на въздух",
+  "title": "Philips Пречиствател на въздух (с CoAP и HTTP)",
   "config": {
     "abort": {
       "already_configured": "Устройството вече е конфигурирано",

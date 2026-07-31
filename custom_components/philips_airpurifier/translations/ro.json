@@ -1,5 +1,5 @@
 {
-  "title": "Philips AirPurifier",
+  "title": "Philips AirPurifier (with CoAP and HTTP)",
   "config": {
     "abort": {
       "already_configured": "Dispozitiv deja configurat",

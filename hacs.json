@@ -1,5 +1,5 @@
 {
-  "name": "Philips AirPurifier",
+  "name": "Philips AirPurifier (with CoAP and HTTP)",
   "render_readme": true,
   "homeassistant": "2026.4.0"
 }

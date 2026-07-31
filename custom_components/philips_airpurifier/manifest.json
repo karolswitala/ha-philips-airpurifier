@@ -1,6 +1,6 @@
 {
   "domain": "philips_airpurifier",
-  "name": "Philips AirPurifier",
+  "name": "Philips AirPurifier (with CoAP and HTTP)",
   "codeowners": ["@ruaan-deysel"],
   "config_flow": true,
   "dependencies": [],

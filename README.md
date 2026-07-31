@@ -76,7 +76,7 @@ This integration includes automatic reconnection attempts, but they may not alwa
 
    [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=ruaan-deysel&repository=ha-philips-airpurifier&category=integration)
 
-2. **Install**: Search for "Philips AirPurifier" in HACS and install it
+2. **Install**: Search for "Philips AirPurifier (with CoAP and HTTP)" in HACS and install it
 3. **Restart**: Restart Home Assistant
 4. **Configure**: Follow the [Configuration](#️-configuration) steps below
 
@@ -112,7 +112,7 @@ If automatic discovery doesn't work:
 
 1. **Navigate**: Go to **Settings** → **Devices & Services**
 2. **Add Integration**: Click **Add Integration**
-3. **Search**: Search for "Philips AirPurifier" and select it
+3. **Search**: Search for "Philips AirPurifier (with CoAP and HTTP)" and select it
 4. **Enter Details**: Provide your device's IP address or hostname
 5. **Complete Setup**: The model will be detected automatically
 
