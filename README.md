@@ -145,6 +145,25 @@ cannot be upgraded to CoAP, so HTTP is the permanent path for them rather than a
 If a device is set up over HTTP, expect up to a 30-second delay before a change made on the
 appliance itself shows up in Home Assistant. Changes made _from_ Home Assistant apply immediately.
 
+Verified against an AC2889/10 on firmware `14`: discovery, setup, 11 entities, polling, encrypted
+writes and the filter warning all work over HTTP.
+
+#### Filter life on HTTP devices
+
+CoAP devices report both how much filter life remains and what the filter's total capacity is, so
+their filter sensors are exact. The legacy HTTP API reports only what remains — no endpoint on
+firmware 14 carries a capacity — so this fork falls back to the **nominal replacement interval**
+for the filter type the device does report (4800 hours for the NanoProtect HEPA and active-carbon
+filters, 360 for the washable pre-filter).
+
+Two consequences on HTTP devices:
+
+- Filter sensors read in **percent** rather than hours, and that percentage is only as accurate as
+  those nominal intervals. If a filter in practice lasts noticeably longer or shorter, the numbers
+  will drift.
+- A filter that reads **zero** still raises the replacement warning, since zero needs no capacity to
+  interpret. That case is exact regardless of the nominal values.
+
 ### Important Notes
 
 - **No YAML Configuration**: This integration uses the UI-based config flow only
@@ -303,15 +322,21 @@ logger:
 
 Logs will be available in `home-assistant.log`.
 
+The `coap` and `philips_airctrl` loggers stay silent on devices set up over HTTP — that transport is
+implemented in the integration itself, so everything it logs comes from
+`custom_components.philips_airpurifier`.
+
 ### Common Issues
 
-| Problem                 | Solution                                                    |
-| ----------------------- | ----------------------------------------------------------- |
-| Device not discovered   | Check network connectivity, ensure local control is enabled |
-| Slow to reflect changes | Device is on the HTTP transport, which polls every 30s      |
-| Connection drops        | Power cycle device, restart Home Assistant                  |
-| Entities unavailable    | Check device firmware version, verify local API is enabled  |
-| Integration not loading | Check Home Assistant logs, verify installation              |
+| Problem                                  | Solution                                                                                                                        |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Device not discovered                    | Check network connectivity, ensure local control is enabled                                                                     |
+| Slow to reflect changes                  | Device is on the HTTP transport, which polls every 30s                                                                          |
+| Connection drops                         | Power cycle device, restart Home Assistant                                                                                      |
+| Entities unavailable                     | Check device firmware version, verify local API is enabled                                                                      |
+| Integration not loading                  | Check Home Assistant logs, verify installation                                                                                  |
+| One `Failed to connect to host` on setup | Expected on HTTP devices; the device needs a moment between sessions and the retry 5s later succeeds                            |
+| Filter percentage looks wrong over HTTP  | The device reports no capacity, so a nominal lifetime is used — see [Filter life on HTTP devices](#filter-life-on-http-devices) |
 
 ### Getting Help for Unsupported Models
 
@@ -400,6 +425,10 @@ This integration builds upon the excellent work of many contributors:
 - **[@Kraineff](https://github.com/Kraineff)**: Various contributions and testing
 - **[@shexbeer](https://github.com/shexbeer)**: Device support and testing
 - **[@thomasloven](https://github.com/thomasloven)**: Custom icon implementation
+
+The legacy HTTP (`/di/v1`) transport added in this fork follows the protocol — the Diffie-Hellman
+handshake and AES-128-CBC body encryption — documented by [@rgerganov](https://github.com/rgerganov)
+in [py-air-control](https://github.com/rgerganov/py-air-control).
 
 ## License
 
