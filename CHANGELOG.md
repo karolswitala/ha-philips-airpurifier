@@ -15,7 +15,10 @@ and this project adheres to [Calendar Versioning](https://calver.org/) (`YYYY.MM
   updates on a real state change, which previously caused
   detection to time out, setup to fail with `ConfigEntryNotReady`, or the
   device to go permanently unavailable after the CoAP observe stream dropped
-  (reconnect kept retrying a read the firmware would never answer).
+  (reconnect kept retrying a read the firmware would never answer). The
+  nudge path also strips the `#N` suffix from the backlight key so it matches
+  the observed status payload and restores the user-selected backlight state
+  instead of forcing a stale value.
 - Nudge-based devices (CX7550, HU1509/HU1510, HU4209/00) no longer go
   permanently silent when the CoAP observe stream hangs without erroring. The
   update watchdog was unconditionally disabled for these models on the
