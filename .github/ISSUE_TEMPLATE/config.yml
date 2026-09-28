@@ -12,3 +12,6 @@ contact_links:
   - name: 📋 Supported Devices
     url: https://github.com/domalab/ha-philips-airpurifier#-supported-devices
     about: Check if your device model is already supported
+  - name: 🐛 Bug Report
+    url: https://github.com/ruaan-deysel/ha-philips-airpurifier/issues/new?template=bug-report.yml
+    about: Report a bug for a supported device only

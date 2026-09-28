@@ -10,17 +10,20 @@ body:
       value: |
         # 🐛 Bug Report
 
-        Thank you for reporting a bug! This template is for issues with **already supported devices** that are not working correctly.
+        Thank you for reporting a bug! This template is for **bug reports only** for devices that are already supported by the integration.
 
         ## 📋 When to use this template:
         - ✅ Your device model is **listed** in our [supported devices](https://github.com/domalab/ha-philips-airpurifier#-supported-devices)
         - ✅ The device was working before but now has issues
-        - ✅ The device integration loads but some features don't work
+        - ✅ The integration loads but some features do not work correctly
         - ✅ You're getting error messages in Home Assistant logs
 
         ## ❌ When NOT to use this template:
-        - 🚫 **Device Support**: Your device model is not supported → Use "Device Support Request" template
-        - 🚫 **Feature Requests**: Want new features for supported devices → Use "Feature Request" template
+        - 🚫 **Unsupported devices / new models**: Please do not open an issue here for a device that is not yet supported
+        - 🚫 **Enhancements / feature requests**: New features or new models are not accepted through this issue tracker
+        - 🚫 **General setup questions**: Use the documentation or community links instead
+
+        Unsupported-device and enhancement requests are intentionally not accepted here to keep issue triage focused on real defects.
 
   - type: input
     id: device_model
