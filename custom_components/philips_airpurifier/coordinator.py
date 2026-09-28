@@ -289,9 +289,7 @@ class PhilipsAirPurifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Watch for missed updates and trigger reconnect if needed."""
         while True:
             interval = (
-                NUDGE_WATCHDOG_TIMEOUT
-                if self._status_nudge_enabled
-                else self._timeout * self.missed_package_count
+                NUDGE_WATCHDOG_TIMEOUT if self._status_nudge_enabled else self._timeout * self.missed_package_count
             )
             await asyncio.sleep(interval)
             if self._last_update > 0:

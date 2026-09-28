@@ -9,12 +9,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.philips_airpurifier.const import DEFAULT_MISSED_PACKAGE_COUNT
 from custom_components.philips_airpurifier.coordinator import (
     NUDGE_WATCHDOG_TIMEOUT,
     RECONNECT_INITIAL_DELAY,
     PhilipsAirPurifierCoordinator,
 )
-from custom_components.philips_airpurifier.const import DEFAULT_MISSED_PACKAGE_COUNT
 from custom_components.philips_airpurifier.model import DeviceInformation
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady

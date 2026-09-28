@@ -10,7 +10,6 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.philips_airpurifier.const import (
     CONF_DEVICE_ID,
     CONF_MAC,
-    CONF_MISSED_PACKAGE_COUNT,
     CONF_MODEL,
     CONF_STATUS,
     CONF_UPDATE_WATCHDOG,
