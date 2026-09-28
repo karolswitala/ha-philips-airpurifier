@@ -10,6 +10,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.philips_airpurifier.const import (
     CONF_DEVICE_ID,
     CONF_MAC,
+    CONF_MISSED_PACKAGE_COUNT,
     CONF_MODEL,
     CONF_STATUS,
     CONF_UPDATE_WATCHDOG,
@@ -1157,3 +1158,31 @@ async def test_options_flow_update_watchdog_can_be_disabled(
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options[CONF_UPDATE_WATCHDOG] is False
+
+
+async def test_options_flow_missed_package_count_can_be_configured(
+    hass: HomeAssistant,
+) -> None:
+    """Test the watchdog missed-packet threshold can be set per device."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            CONF_HOST: TEST_HOST,
+            CONF_MODEL: TEST_MODEL,
+            CONF_NAME: TEST_NAME,
+            CONF_DEVICE_ID: TEST_DEVICE_ID,
+            CONF_STATUS: MOCK_STATUS_GEN1,
+        },
+        unique_id=TEST_DEVICE_ID,
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={CONF_UPDATE_WATCHDOG: True, "missed_package_count": 10},
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options["missed_package_count"] == 10

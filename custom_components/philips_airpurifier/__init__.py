@@ -19,6 +19,7 @@ from .client import async_create_client
 from .const import (
     CONF_DEVICE_ID,
     CONF_MAC,
+    CONF_MISSED_PACKAGE_COUNT,
     CONF_MODEL,
     CONF_STATUS,
     CONF_UPDATE_WATCHDOG,
@@ -94,6 +95,7 @@ async def async_setup_entry(
         host,
         device_information,
         update_watchdog_enabled=entry.options.get(CONF_UPDATE_WATCHDOG, True),
+        missed_package_count_override=entry.options.get(CONF_MISSED_PACKAGE_COUNT),
     )
 
     if not entry.options.get(CONF_UPDATE_WATCHDOG, True) and CONF_STATUS in entry.data:

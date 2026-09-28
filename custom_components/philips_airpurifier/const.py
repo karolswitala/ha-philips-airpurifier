@@ -52,6 +52,14 @@ CONF_STATUS = "status"
 # re-discover the device and update its IP after a DHCP lease change. See issue #8.
 CONF_MAC = "mac"
 CONF_UPDATE_WATCHDOG = "update_watchdog"
+CONF_MISSED_PACKAGE_COUNT = "missed_package_count"
+
+# Default watchdog tolerance used when no model- or per-device override is set.
+DEFAULT_MISSED_PACKAGE_COUNT = 3
+# Minimum missed-packet count accepted by the watchdog options form.
+MIN_MISSED_PACKAGE_COUNT = 1
+# Maximum missed-packet count accepted by the watchdog options form.
+MAX_MISSED_PACKAGE_COUNT = 20
 
 # Config-entry option flag set when the user acknowledges the filter
 # replacement repair, so it is not recreated on every coordinator update.

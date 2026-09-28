@@ -23,10 +23,14 @@ from .client import (
 from .const import (
     CONF_DEVICE_ID,
     CONF_MAC,
+    CONF_MISSED_PACKAGE_COUNT,
     CONF_MODEL,
     CONF_STATUS,
     CONF_UPDATE_WATCHDOG,
+    DEFAULT_MISSED_PACKAGE_COUNT,
     DOMAIN,
+    MAX_MISSED_PACKAGE_COUNT,
+    MIN_MISSED_PACKAGE_COUNT,
     PhilipsApi,
 )
 from .device_models import DEVICE_MODELS
@@ -434,17 +438,35 @@ class PhilipsAirPurifierOptionsFlow(OptionsFlowWithReload):
         if user_input is not None:
             return self.async_create_entry(data=user_input)
 
-        return self.async_show_form(
-            step_id="init",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(
+        schema = vol.Schema(
+            {
+                vol.Required(
+                    CONF_UPDATE_WATCHDOG,
+                    default=self.config_entry.options.get(
                         CONF_UPDATE_WATCHDOG,
-                        default=self.config_entry.options.get(
-                            CONF_UPDATE_WATCHDOG,
-                            True,
-                        ),
-                    ): bool,
-                }
-            ),
+                        True,
+                    ),
+                ): bool,
+                vol.Required(
+                    CONF_MISSED_PACKAGE_COUNT,
+                    default=self.config_entry.options.get(
+                        CONF_MISSED_PACKAGE_COUNT,
+                        DEFAULT_MISSED_PACKAGE_COUNT,
+                    ),
+                ): vol.All(
+                    vol.Coerce(int),
+                    vol.Range(min=MIN_MISSED_PACKAGE_COUNT, max=MAX_MISSED_PACKAGE_COUNT),
+                ),
+            }
         )
+        schema = self.add_suggested_values_to_schema(
+            schema,
+            {
+                CONF_MISSED_PACKAGE_COUNT: self.config_entry.options.get(
+                    CONF_MISSED_PACKAGE_COUNT,
+                    DEFAULT_MISSED_PACKAGE_COUNT,
+                ),
+                CONF_UPDATE_WATCHDOG: self.config_entry.options.get(CONF_UPDATE_WATCHDOG, True),
+            },
+        )
+        return self.async_show_form(step_id="init", data_schema=schema)

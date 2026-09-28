@@ -14,6 +14,7 @@ from custom_components.philips_airpurifier.coordinator import (
     RECONNECT_INITIAL_DELAY,
     PhilipsAirPurifierCoordinator,
 )
+from custom_components.philips_airpurifier.const import DEFAULT_MISSED_PACKAGE_COUNT
 from custom_components.philips_airpurifier.model import DeviceInformation
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
@@ -208,6 +209,7 @@ def _make_coordinator(
     model: str = TEST_MODEL,
     client: AsyncMock | None = None,
     update_watchdog_enabled: bool = True,
+    missed_package_count: int = DEFAULT_MISSED_PACKAGE_COUNT,
 ) -> PhilipsAirPurifierCoordinator:
     """Create a coordinator instance for unit-path testing."""
     device_info = DeviceInformation(
@@ -222,6 +224,7 @@ def _make_coordinator(
         TEST_HOST,
         device_info,
         update_watchdog_enabled=update_watchdog_enabled,
+        missed_package_count_override=missed_package_count,
     )
 
 
@@ -383,6 +386,30 @@ async def test_async_watchdog_no_reconnect_when_recent(hass: HomeAssistant) -> N
             await coordinator._async_watchdog()
 
     reconnect_mock.assert_not_awaited()
+
+
+async def test_async_watchdog_uses_configured_missed_package_count(hass: HomeAssistant) -> None:
+    """Test watchdog honors a per-device missed-packet threshold."""
+    coordinator = _make_coordinator(hass, missed_package_count=7)
+    coordinator._timeout = 10
+    coordinator._last_update = 1
+
+    fake_loop = MagicMock()
+    fake_loop.time.return_value = 1 + (10 * 7) + 1
+
+    with (
+        patch(
+            "custom_components.philips_airpurifier.coordinator.asyncio.sleep",
+            side_effect=[None, asyncio.CancelledError],
+        ) as sleep_mock,
+        patch("custom_components.philips_airpurifier.coordinator.asyncio.get_event_loop", return_value=fake_loop),
+        patch.object(coordinator, "_async_reconnect", new=AsyncMock()) as reconnect_mock,
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await coordinator._async_watchdog()
+
+    sleep_mock.assert_called_with(70)
+    reconnect_mock.assert_awaited_once()
 
 
 async def test_async_watchdog_uses_longer_interval_for_nudge_devices(hass: HomeAssistant) -> None:

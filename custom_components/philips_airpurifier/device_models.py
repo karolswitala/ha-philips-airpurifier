@@ -557,6 +557,17 @@ _CONFIG_AC303X = DeviceModelConfig(
     selects=[PhilipsApi.GAS_PREFERRED_INDEX],
 )
 
+# AC3039 config (shared with AC3033/AC3036 but tuned for the AC3039 stand-by
+# behavior, which can remain quiet for much longer before it reports again.
+_CONFIG_AC3039 = DeviceModelConfig(
+    api_generation=ApiGeneration.GEN1,
+    preset_modes=_AC303X_PRESET_MODES,
+    speeds=_AC303X_SPEEDS,
+    lights=[PhilipsApi.DISPLAY_BACKLIGHT, PhilipsApi.LIGHT_BRIGHTNESS],
+    selects=[PhilipsApi.GAS_PREFERRED_INDEX],
+    missed_package_count=10,
+)
+
 # AC305x config (shared by AC3055, AC3059)
 _CONFIG_AC305X = DeviceModelConfig(
     api_generation=ApiGeneration.GEN1,
@@ -991,7 +1002,7 @@ DEVICE_MODELS: dict[str, DeviceModelConfig] = {
     # =========================================================================
     FanModel.AC3033: _CONFIG_AC303X,
     FanModel.AC3036: _CONFIG_AC303X,
-    FanModel.AC3039: _CONFIG_AC303X,
+    FanModel.AC3039: _CONFIG_AC3039,
     # =========================================================================
     # AC305x family
     # =========================================================================

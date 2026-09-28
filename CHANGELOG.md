@@ -7,6 +7,8 @@ and this project adheres to [Calendar Versioning](https://calver.org/) (`YYYY.MM
 
 ## [Unreleased]
 
+## [2026.9.1] - 2026-09-28
+
 ### Fixed
 
 - The **HU1509/HU1510** and **HU4209/00** now use a status nudge (toggling the
@@ -29,6 +31,12 @@ and this project adheres to [Calendar Versioning](https://calver.org/) (`YYYY.MM
   legitimately idle is not needlessly reconnected. The per-device "update
   watchdog" option can still disable it entirely for a device known to sit
   idle for very long stretches.
+- The watchdog missed-package threshold is now configurable per device with a
+  clear precedence order: per-device override, per-model default, then the
+  global fallback. This lets models like the **AC3039** stay online longer in
+  standby without forcing a broader change for every device, while still
+  keeping the default watchdog tolerance at 3 missed packages globally
+  ([#92](https://github.com/ruaan-deysel/ha-philips-airpurifier/issues/92)).
 
 ## [2026.9.0] - 2026-09-04
 

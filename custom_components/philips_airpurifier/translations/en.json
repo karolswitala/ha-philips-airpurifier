@@ -34,9 +34,14 @@
   "options": {
     "step": {
       "init": {
-        "title": "Update watchdog",
+        "title": "Watchdog settings",
+        "description": "Adjust how long a device may go without reporting before it is treated as unavailable.",
         "data": {
-          "update_watchdog": "Enable update watchdog"
+          "update_watchdog": "Enable update watchdog",
+          "missed_package_count": "Missed update threshold"
+        },
+        "data_description": {
+          "missed_package_count": "A higher value keeps devices that report infrequently online for longer before they become unavailable. This is useful for devices like the AC3039 in stand-by mode."
         }
       }
     }
