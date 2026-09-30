@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from typing import Any
+import os
+from typing import Any, cast
 
 from philips_airctrl import CoAPClient
 
@@ -16,6 +17,40 @@ _NUDGE_REGISTER_DELAY = 2.0
 # How long to wait for a push after each nudge, and how many times to nudge.
 _NUDGE_WAIT_TIMEOUT = 12.0
 _NUDGE_ATTEMPTS = 2
+_AIOCOAP_CLIENT_TRANSPORT_ENV = "AIOCOAP_CLIENT_TRANSPORT"
+_aiocoap_transport_env_ready = False
+_aiocoap_transport_env_lock = asyncio.Lock()
+
+
+def _resolve_aiocoap_client_transport_env() -> str | None:
+    """Resolve aiocoap client transports as an env-var value."""
+    with contextlib.suppress(Exception):
+        from aiocoap import defaults
+
+        defaults_any = cast(Any, defaults)
+        raw_transports = defaults_any.get_default_clienttransports(use_env=True)
+        transports = tuple(str(transport) for transport in raw_transports)
+        if transports:
+            return ":".join(transports)
+    return None
+
+
+async def _async_prepare_aiocoap_client_transport_env() -> None:
+    """Prepare aiocoap transport defaults outside the event loop."""
+    global _aiocoap_transport_env_ready
+
+    if _aiocoap_transport_env_ready:
+        return
+
+    async with _aiocoap_transport_env_lock:
+        if _aiocoap_transport_env_ready:
+            return
+
+        if _AIOCOAP_CLIENT_TRANSPORT_ENV not in os.environ:
+            if transport_env := await asyncio.to_thread(_resolve_aiocoap_client_transport_env):
+                os.environ[_AIOCOAP_CLIENT_TRANSPORT_ENV] = transport_env
+
+        _aiocoap_transport_env_ready = True
 
 
 async def async_create_client(
@@ -24,6 +59,7 @@ async def async_create_client(
     create_client: Any | None = None,
 ) -> CoAPClient:
     """Create a CoAP client for a host with timeout protection."""
+    await _async_prepare_aiocoap_client_transport_env()
     creator = create_client or CoAPClient.create
     return await asyncio.wait_for(creator(host), timeout=timeout)
 
@@ -60,6 +96,7 @@ async def async_fetch_device_info(
     ``sys/dev/status`` read, so this identifies a device whose status cannot be
     read directly.
     """
+    await _async_prepare_aiocoap_client_transport_env()
     creator = create_client or CoAPClient.create
     client = await asyncio.wait_for(creator(host, sync=False), timeout=timeout)
     try:
