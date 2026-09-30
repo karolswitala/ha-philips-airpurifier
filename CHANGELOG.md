@@ -7,6 +7,8 @@ and this project adheres to [Calendar Versioning](https://calver.org/) (`YYYY.MM
 
 ## [Unreleased]
 
+## [2026.9.2] - 2026-09-30
+
 ### Fixed
 
 - Reduced Home Assistant event-loop blocking warnings during Philips CoAP
