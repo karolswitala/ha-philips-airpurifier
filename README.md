@@ -150,6 +150,7 @@ If your device changes IP addresses:
 | **AC0950**   | AC0950, AC0951                             | Compact Air Purifiers   |
 | **AC1214**   | AC1214                                     | Compact Air Purifiers   |
 | **AC1715**   | AC1715                                     | Compact Air Purifiers   |
+| **AC2200**   | AC2210/10, AC2220/10, AC2221/13             | PureProtect Quiet 2200  |
 | **AC2729**   | AC2729                                     | Mid-range Air Purifiers |
 | **AC2889**   | AC2889                                     | Mid-range Air Purifiers |
 | **AC2936**   | AC2936, AC2939, AC2958, AC2959             | Mid-range Air Purifiers |

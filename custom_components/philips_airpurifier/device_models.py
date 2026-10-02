@@ -852,9 +852,10 @@ DEVICE_MODELS: dict[str, DeviceModelConfig] = {
         selects=[PhilipsApi.NEW_PREFERRED_INDEX],
     ),
     # =========================================================================
-    # AC2210/AC2221 family (PureProtect Quiet 2200 series, e.g. AC2210/10, AC2221/13)
+    # AC2210/AC2220/AC2221 family (PureProtect Quiet 2200 series)
     # =========================================================================
     FanModel.AC2210: _CONFIG_AC2221,
+    FanModel.AC2220: _CONFIG_AC2221,
     FanModel.AC2221: _CONFIG_AC2221,
     # =========================================================================
     # AC2729

@@ -96,6 +96,7 @@ class FanModel(StrEnum):
     AC1214 = "AC1214"
     AC1715 = "AC1715"
     AC2210 = "AC2210"
+    AC2220 = "AC2220"
     AC2221 = "AC2221"
     AC2729 = "AC2729"
     AC2889 = "AC2889"
