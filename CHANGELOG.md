@@ -7,6 +7,17 @@ and this project adheres to [Calendar Versioning](https://calver.org/) (`YYYY.MM
 
 ## [Unreleased]
 
+## [2026.9.2] - 2026-09-30
+
+### Fixed
+
+- Reduced Home Assistant event-loop blocking warnings during Philips CoAP
+  client creation by preparing aiocoap transport defaults in a worker thread
+  before opening the CoAP client.
+- Replaced deprecated `CONCENTRATION_MICROGRAMS_PER_CUBIC_METER` usage with
+  `UnitOfDensity.MICROGRAMS_PER_CUBIC_METER` to stay compatible with the
+  Home Assistant 2027.8 deprecation timeline.
+
 ## [2026.9.1] - 2026-09-28
 
 ### Fixed
