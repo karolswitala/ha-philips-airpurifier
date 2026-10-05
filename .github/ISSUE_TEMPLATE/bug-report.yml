@@ -1,5 +1,5 @@
-name: 🐛 Bug Report
-description: Report a bug or issue with a supported device
+name: Bug Report
+description: Report a bug with a supported device
 title: "[Bug] "
 labels: ["bug"]
 assignees: []
@@ -8,19 +8,11 @@ body:
   - type: markdown
     attributes:
       value: |
-        # 🐛 Bug Report
+        # Bug Report
 
-        Thank you for reporting a bug! This template is for issues with **already supported devices** that are not working correctly.
+        Please use this template only for bugs with devices that are already supported by the integration.
 
-        ## 📋 When to use this template:
-        - ✅ Your device model is **listed** in our [supported devices](https://github.com/domalab/ha-philips-airpurifier#-supported-devices)
-        - ✅ The device was working before but now has issues
-        - ✅ The device integration loads but some features don't work
-        - ✅ You're getting error messages in Home Assistant logs
-
-        ## ❌ When NOT to use this template:
-        - 🚫 **Device Support**: Your device model is not supported → Use "Device Support Request" template
-        - 🚫 **Feature Requests**: Want new features for supported devices → Use "Feature Request" template
+        Do not open unsupported-device or enhancement requests here.
 
   - type: input
     id: device_model

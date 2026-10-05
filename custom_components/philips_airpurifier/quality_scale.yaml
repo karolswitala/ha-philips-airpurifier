@@ -2,6 +2,9 @@ rules:
   # Bronze
   config-flow:
     status: done
+  options-flow:
+    status: done
+    comment: Per-device watchdog settings include the configurable missed-package threshold.
   test-before-configure:
     status: done
   unique-config-entry:

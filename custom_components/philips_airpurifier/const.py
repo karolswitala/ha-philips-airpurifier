@@ -15,11 +15,11 @@ from homeassistant.components.sensor import (
 from homeassistant.const import (
     ATTR_DEVICE_CLASS,
     ATTR_TEMPERATURE,
-    CONCENTRATION_MICROGRAMS_PER_CUBIC_METER,
     CONF_ENTITY_CATEGORY,
     PERCENTAGE,
     SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
     EntityCategory,
+    UnitOfDensity,
     UnitOfTemperature,
     UnitOfTime,
 )
@@ -56,6 +56,15 @@ CONF_PROTOCOL = "protocol"
 # with a network-MAC connection, which lets the `registered_devices` DHCP matcher
 # re-discover the device and update its IP after a DHCP lease change. See issue #8.
 CONF_MAC = "mac"
+CONF_UPDATE_WATCHDOG = "update_watchdog"
+CONF_MISSED_PACKAGE_COUNT = "missed_package_count"
+
+# Default watchdog tolerance used when no model- or per-device override is set.
+DEFAULT_MISSED_PACKAGE_COUNT = 3
+# Minimum missed-packet count accepted by the watchdog options form.
+MIN_MISSED_PACKAGE_COUNT = 1
+# Maximum missed-packet count accepted by the watchdog options form.
+MAX_MISSED_PACKAGE_COUNT = 20
 
 # Config-entry option flag set when the user acknowledges the filter
 # replacement repair, so it is not recreated on every coordinator update.
@@ -103,6 +112,7 @@ class FanModel(StrEnum):
     AC1214 = "AC1214"
     AC1715 = "AC1715"
     AC2210 = "AC2210"
+    AC2220 = "AC2220"
     AC2221 = "AC2221"
     AC2729 = "AC2729"
     AC2889 = "AC2889"
@@ -401,6 +411,14 @@ class PhilipsApi:
         SWITCH_ON: 80,
         SWITCH_OFF: 0,
     }
+    # The AMF family (AMF765, AMF870) stores the rotation angle itself in
+    # D0320F: 0 is off, 30..350 is the oscillation angle in degrees. The "on"
+    # value below is only the fallback used when no angle has been observed
+    # yet -- the fan entity restores the last reported angle when available.
+    OSCILLATION_MAP5: dict[str, int] = {
+        SWITCH_ON: 90,
+        SWITCH_OFF: 0,
+    }
 
     # the AC1715 seems to follow a new scheme, this should later be refactored
     NEW_NAME = "D01-03"
@@ -620,19 +638,19 @@ SENSOR_TYPES: dict[str, SensorDescription] = {
     PhilipsApi.PM25: {
         ATTR_DEVICE_CLASS: SensorDeviceClass.PM25,
         FanAttributes.LABEL: FanAttributes.PM25,
-        FanAttributes.UNIT: CONCENTRATION_MICROGRAMS_PER_CUBIC_METER,
+        FanAttributes.UNIT: UnitOfDensity.MICROGRAMS_PER_CUBIC_METER,
         ATTR_STATE_CLASS: SensorStateClass.MEASUREMENT,
     },
     PhilipsApi.NEW_PM25: {
         ATTR_DEVICE_CLASS: SensorDeviceClass.PM25,
         FanAttributes.LABEL: FanAttributes.PM25,
-        FanAttributes.UNIT: CONCENTRATION_MICROGRAMS_PER_CUBIC_METER,
+        FanAttributes.UNIT: UnitOfDensity.MICROGRAMS_PER_CUBIC_METER,
         ATTR_STATE_CLASS: SensorStateClass.MEASUREMENT,
     },
     PhilipsApi.NEW2_PM25: {
         ATTR_DEVICE_CLASS: SensorDeviceClass.PM25,
         FanAttributes.LABEL: FanAttributes.PM25,
-        FanAttributes.UNIT: CONCENTRATION_MICROGRAMS_PER_CUBIC_METER,
+        FanAttributes.UNIT: UnitOfDensity.MICROGRAMS_PER_CUBIC_METER,
         ATTR_STATE_CLASS: SensorStateClass.MEASUREMENT,
     },
     PhilipsApi.NEW2_GAS: {

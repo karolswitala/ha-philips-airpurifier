@@ -24,6 +24,21 @@
       "cannot_connect": "Verbindung zum Gerät nicht möglich"
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Watchdog-Einstellungen",
+        "description": "Passen Sie an, wie lange ein Gerät ohne Meldung bleiben darf, bevor es als nicht verfügbar gilt.",
+        "data": {
+          "update_watchdog": "Update-Watchdog aktivieren",
+          "missed_package_count": "Schwellenwert für verpasste Updates"
+        },
+        "data_description": {
+          "missed_package_count": "Ein höherer Wert hält Geräte, die selten melden, länger online, bevor sie als nicht verfügbar markiert werden. Das ist besonders für Geräte wie den AC3039 im Standby nützlich."
+        }
+      }
+    }
+  },
   "entity": {
     "fan": {
       "pap": {
@@ -274,11 +289,11 @@
       }
     },
     "number": {
-      "oscillaton": {
+      "oscillation": {
         "name": "Oszillation"
       },
-      "target_temp": {
-        "name": "Ziel Temperature"
+      "target_temperature": {
+        "name": "Zieltemperatur"
       }
     }
   }

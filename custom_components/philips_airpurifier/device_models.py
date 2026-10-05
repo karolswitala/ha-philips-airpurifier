@@ -8,6 +8,8 @@ class inheritance.
 
 from __future__ import annotations
 
+from typing import Any
+
 from .const import FanModel, PhilipsApi, PresetMode
 from .model import ApiGeneration, DeviceModelConfig
 
@@ -555,6 +557,17 @@ _CONFIG_AC303X = DeviceModelConfig(
     selects=[PhilipsApi.GAS_PREFERRED_INDEX],
 )
 
+# AC3039 config (shared with AC3033/AC3036 but tuned for the AC3039 stand-by
+# behavior, which can remain quiet for much longer before it reports again.
+_CONFIG_AC3039 = DeviceModelConfig(
+    api_generation=ApiGeneration.GEN1,
+    preset_modes=_AC303X_PRESET_MODES,
+    speeds=_AC303X_SPEEDS,
+    lights=[PhilipsApi.DISPLAY_BACKLIGHT, PhilipsApi.LIGHT_BRIGHTNESS],
+    selects=[PhilipsApi.GAS_PREFERRED_INDEX],
+    missed_package_count=10,
+)
+
 # AC305x config (shared by AC3055, AC3059)
 _CONFIG_AC305X = DeviceModelConfig(
     api_generation=ApiGeneration.GEN1,
@@ -676,6 +689,19 @@ _CONFIG_AC5659 = DeviceModelConfig(
     selects=[PhilipsApi.PREFERRED_INDEX],
 )
 
+# Newer firmware on some HU1509/HU1510/HU4209 units never answers a status
+# read; it only pushes status to observers on a real state change (the same
+# push-only behavior already handled for CX7550). Toggle the
+# display backlight (D03105#2) to force the push. NEW2_DISPLAY_BACKLIGHT4 uses
+# the same off/medium/on codes (0/115/123) as NEW2_DISPLAY_BACKLIGHT2/3, which
+# are already confirmed from device captures on the CX7550/CX3550 family. See
+# coordinator._build_status_nudge for how the (transient, resting) pair is
+# used to avoid clobbering the user's display setting on every reconnect.
+_HU1509_STATUS_NUDGE: list[tuple[str, Any]] = [
+    (PhilipsApi.NEW2_DISPLAY_BACKLIGHT4, 0),
+    (PhilipsApi.NEW2_DISPLAY_BACKLIGHT4, 115),
+]
+
 # HU1509/HU1510 config (both map to PhilipsHU1510 class in model_to_class)
 _CONFIG_HU1509 = DeviceModelConfig(
     api_generation=ApiGeneration.GEN3,
@@ -694,6 +720,7 @@ _CONFIG_HU1509 = DeviceModelConfig(
     ],
     binary_sensors=[PhilipsApi.NEW2_ERROR_CODE],
     humidifiers=[PhilipsApi.NEW2_HUMIDITY_TARGET2],
+    status_nudge=_HU1509_STATUS_NUDGE,
 )
 
 # HU4209/00 config -- identical to HU1509 but without NEW2_AMBIENT_LIGHT_MODE
@@ -713,6 +740,7 @@ _CONFIG_HU4209 = DeviceModelConfig(
     ],
     binary_sensors=[PhilipsApi.NEW2_ERROR_CODE],
     humidifiers=[PhilipsApi.NEW2_HUMIDITY_TARGET2],
+    status_nudge=_HU1509_STATUS_NUDGE,
 )
 
 # =============================================================================
@@ -824,9 +852,10 @@ DEVICE_MODELS: dict[str, DeviceModelConfig] = {
         selects=[PhilipsApi.NEW_PREFERRED_INDEX],
     ),
     # =========================================================================
-    # AC2210/AC2221 family (PureProtect Quiet 2200 series, e.g. AC2210/10, AC2221/13)
+    # AC2210/AC2220/AC2221 family (PureProtect Quiet 2200 series)
     # =========================================================================
     FanModel.AC2210: _CONFIG_AC2221,
+    FanModel.AC2220: _CONFIG_AC2221,
     FanModel.AC2221: _CONFIG_AC2221,
     # =========================================================================
     # AC2729
@@ -974,7 +1003,7 @@ DEVICE_MODELS: dict[str, DeviceModelConfig] = {
     # =========================================================================
     FanModel.AC3033: _CONFIG_AC303X,
     FanModel.AC3036: _CONFIG_AC303X,
-    FanModel.AC3039: _CONFIG_AC303X,
+    FanModel.AC3039: _CONFIG_AC3039,
     # =========================================================================
     # AC305x family
     # =========================================================================
@@ -1337,6 +1366,10 @@ DEVICE_MODELS: dict[str, DeviceModelConfig] = {
         # AMF765 overrides selects from AMFxxx
         selects=[PhilipsApi.NEW2_CIRCULATION],
         numbers=[PhilipsApi.NEW2_OSCILLATION],
+        oscillation={
+            PhilipsApi.NEW2_OSCILLATION: PhilipsApi.OSCILLATION_MAP5,
+        },
+        oscillation_is_angle=True,
         unavailable_sensors=[PhilipsApi.NEW2_GAS],
     ),
     # =========================================================================
@@ -1358,8 +1391,17 @@ DEVICE_MODELS: dict[str, DeviceModelConfig] = {
             PhilipsApi.NEW2_GAS_PREFERRED_INDEX,
             PhilipsApi.NEW2_HEATING,
         ],
-        # AMF870 overrides numbers from AMFxxx
-        numbers=[PhilipsApi.NEW2_TARGET_TEMP],
+        # AMF870 adds the target temperature on top of the AMFxxx oscillation
+        # angle. Both numbers must be listed: dropping NEW2_OSCILLATION here
+        # removes the rotation angle control from the device entirely.
+        numbers=[
+            PhilipsApi.NEW2_OSCILLATION,
+            PhilipsApi.NEW2_TARGET_TEMP,
+        ],
+        oscillation={
+            PhilipsApi.NEW2_OSCILLATION: PhilipsApi.OSCILLATION_MAP5,
+        },
+        oscillation_is_angle=True,
     ),
     # =========================================================================
     # CX3120
@@ -1643,9 +1685,12 @@ DEVICE_MODELS: dict[str, DeviceModelConfig] = {
         # the user's last-known backlight value (falling back to this resting
         # value, "low", on first contact) so the nudge does not force the
         # display back on every reconnect. See coordinator._build_status_nudge.
+        # Uses the same NEW2_DISPLAY_BACKLIGHT4 constant as `lights` above (not
+        # a different sibling constant): the coordinator strips the "#N" suffix
+        # before touching the device, so this matches the actual light entity.
         status_nudge=[
-            (PhilipsApi.NEW2_DISPLAY_BACKLIGHT2, 0),
-            (PhilipsApi.NEW2_DISPLAY_BACKLIGHT2, 115),
+            (PhilipsApi.NEW2_DISPLAY_BACKLIGHT4, 0),
+            (PhilipsApi.NEW2_DISPLAY_BACKLIGHT4, 115),
         ],
     ),
     # =========================================================================

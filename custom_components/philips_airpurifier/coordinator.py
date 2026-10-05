@@ -13,7 +13,7 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .client import async_create_client, async_fetch_status_with_nudge
-from .const import DOMAIN, HTTP_POLL_INTERVAL, Protocol
+from .const import DEFAULT_MISSED_PACKAGE_COUNT, DOMAIN, HTTP_POLL_INTERVAL, Protocol
 from .device_models import DEVICE_MODELS
 from .model import ApiGeneration, DeviceInformation, DeviceModelConfig
 
@@ -24,10 +24,34 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
-MISSED_PACKAGE_COUNT = 3
+MISSED_PACKAGE_COUNT = DEFAULT_MISSED_PACKAGE_COUNT
 DEFAULT_TIMEOUT = 60
 RECONNECT_INITIAL_DELAY = 5
 RECONNECT_MAX_DELAY = 60
+
+# Nudge-only devices push status on a real state change, so an idle device
+# can legitimately send nothing for a long stretch -- the short
+# `_timeout * MISSED_PACKAGE_COUNT` window used for regular devices would
+# force needless reconnects on those. But a stream that hangs without
+# erroring (socket alive, no data, no exception) still needs to be caught:
+# `_async_observe_status` only reconnects when `observe_status()` raises, so
+# a silent hang blocks forever otherwise. This longer window catches that
+# stall while tolerating normal idle periods.
+NUDGE_WATCHDOG_TIMEOUT = 1800
+
+# Every CoAP call the coordinator makes is bounded. `get_status` awaits an
+# aiocoap response built with `transport_tuning=Unreliable` and has no internal
+# timeout, so a device that accepts a request and never answers leaves the
+# await pending indefinitely. The helpers in client.py already bound their
+# calls; these are the coordinator's own.
+COAP_CALL_TIMEOUT = 30
+SHUTDOWN_TIMEOUT = 10
+
+# A reconnect older than this is treated as wedged rather than in progress.
+# Without it, `_async_reconnect`'s duplicate guard turns one stuck await into a
+# permanent stall: the task is never `done()`, so every later attempt returns
+# immediately and neither the success nor the failure branch is ever reached.
+RECONNECT_TASK_MAX = 120
 
 
 class PhilipsAirPurifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -46,6 +70,9 @@ class PhilipsAirPurifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         host: str,
         device_info: DeviceInformation,
         protocol: Protocol = Protocol.COAP,
+        update_watchdog_enabled: bool = True,
+        missed_package_count_override: int | None = None,
+        missed_package_count: int | None = None,
     ) -> None:
         """Initialize the coordinator."""
         super().__init__(
@@ -59,6 +86,13 @@ class PhilipsAirPurifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.device_info = device_info
         self.protocol = protocol
 
+        if missed_package_count is not None and missed_package_count_override is None:
+            missed_package_count_override = missed_package_count
+
+        self._status_nudge_enabled = bool(getattr(self.model_config, "status_nudge", None))
+        self._missed_package_count_override = missed_package_count_override
+
+        self._update_watchdog_enabled = update_watchdog_enabled
         self._observe_task: asyncio.Task[None] | None = None
         self._reconnect_task: asyncio.Task[None] | None = None
         self._reconnect_retry_task: asyncio.Task[None] | None = None
@@ -66,6 +100,9 @@ class PhilipsAirPurifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._watchdog_task: asyncio.Task[None] | None = None
         self._last_update: float = 0.0
         self._reconnect_delay: int = RECONNECT_INITIAL_DELAY
+        # Event-loop time at which the current reconnect task started, so a
+        # wedged reconnect can be told from a slow one. None when idle.
+        self._reconnect_started: float | None = None
         self._device_available = True
         self._shutting_down: bool = False
 
@@ -84,6 +121,13 @@ class PhilipsAirPurifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.last_update_success = True
             self.async_update_listeners()
         self._device_available = True
+
+    @property
+    def missed_package_count(self) -> int:
+        """Return the missed-package watchdog threshold for this device."""
+        if self._missed_package_count_override is not None:
+            return self._missed_package_count_override
+        return self.model_config.missed_package_count
 
     @property
     def model(self) -> str:
@@ -122,7 +166,7 @@ class PhilipsAirPurifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def async_set_control_values(self, values: dict[str, Any]) -> None:
         """Set multiple control values on the device."""
-        await self.client.set_control_values(data=values)
+        await asyncio.wait_for(self.client.set_control_values(data=values), timeout=COAP_CALL_TIMEOUT)
 
     def _build_status_nudge(self) -> list[tuple[str, Any]]:
         """Build the nudge write sequence for a push-on-change device.
@@ -134,12 +178,20 @@ class PhilipsAirPurifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         turned off. Instead, end the sequence on the value we last observed for
         that key (the user's choice), while still passing through a different
         transient value first so the device sees a genuine change and pushes.
+
+        A model's declared key may carry a "#N" suffix (e.g. "D03105#2") that
+        selects a value scheme for entities sharing one physical register under
+        different names -- see PhilipsLight.kind stripping the same suffix in
+        light.py. The suffix is presentation-only: the wire key and the pushed
+        status are always keyed by the bare id, so it's stripped here too,
+        otherwise the last-known-value lookup below never matches and the
+        "resting" value always wins.
         """
         base = self.model_config.status_nudge or []
         if not base:
             return []
 
-        key = base[0][0]
+        key = base[0][0].partition("#")[0]
         transient = base[0][1]
         resting = base[-1][1]
 
@@ -169,7 +221,7 @@ class PhilipsAirPurifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # first and recreate it afterwards — otherwise the observe stream started
         # after this would attach to the connection the nudge just evicted.
         with contextlib.suppress(Exception):
-            await self.client.shutdown()
+            await asyncio.wait_for(self.client.shutdown(), timeout=SHUTDOWN_TIMEOUT)
         status = await self._async_nudge_fetch()
         self.client = await async_create_client(self.host, create_client=CoAPClient.create)
         self._timeout = DEFAULT_TIMEOUT
@@ -183,7 +235,7 @@ class PhilipsAirPurifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         For CoAP this backs the initial refresh and the nudge fallback; for HTTP
         it is the regular poll.
         """
-        if self.protocol is Protocol.COAP and self.model_config.status_nudge:
+        if self.protocol is Protocol.COAP and self._status_nudge_enabled:
             # This firmware never answers a status read; ongoing state comes
             # from the observe stream. Return the last pushed status if we have
             # it, otherwise force one push via a nudge.
@@ -200,7 +252,7 @@ class PhilipsAirPurifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             # One-shot read: ongoing updates come from the observe stream, so
             # avoid registering a redundant observation (philips-airctrl >= 1.1.0).
-            status, timeout = await self.client.get_status(observe=False)
+            status, timeout = await asyncio.wait_for(self.client.get_status(observe=False), timeout=COAP_CALL_TIMEOUT)
             self._timeout = timeout
             self._mark_available()
             return status
@@ -219,12 +271,7 @@ class PhilipsAirPurifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             f"philips_airpurifier_observe_{self.host}",
         )
 
-        if self.model_config.status_nudge:
-            # Nudge-only devices push status only on a real state change, so an
-            # idle device legitimately sends nothing. A periodic watchdog would
-            # force needless reconnects (each re-toggling the nudge value) while
-            # the device is simply idle. Rely on observe-stream errors to detect
-            # real disconnects instead of a missed-update timer.
+        if not self._update_watchdog_enabled:
             return
 
         if self._watchdog_task is not None:
@@ -261,10 +308,13 @@ class PhilipsAirPurifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_watchdog(self) -> None:
         """Watch for missed updates and trigger reconnect if needed."""
         while True:
-            await asyncio.sleep(self._timeout * MISSED_PACKAGE_COUNT)
+            interval = (
+                NUDGE_WATCHDOG_TIMEOUT if self._status_nudge_enabled else self._timeout * self.missed_package_count
+            )
+            await asyncio.sleep(interval)
             if self._last_update > 0:
                 elapsed = asyncio.get_event_loop().time() - self._last_update
-                if elapsed > self._timeout * MISSED_PACKAGE_COUNT:
+                if elapsed > interval:
                     self._mark_unavailable("watchdog timeout")
                     _LOGGER.warning(
                         "No updates from %s for %d seconds, reconnecting",
@@ -276,7 +326,19 @@ class PhilipsAirPurifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_reconnect(self) -> None:
         """Reconnect to the device."""
         if self._reconnect_task is not None and not self._reconnect_task.done():
-            return
+            age = (
+                asyncio.get_event_loop().time() - self._reconnect_started
+                if self._reconnect_started is not None
+                else None
+            )
+            if age is None or age < RECONNECT_TASK_MAX:
+                return
+            _LOGGER.warning(
+                "Previous reconnect to %s has been running for %d seconds, cancelling it and starting a new one",
+                self.host,
+                int(age),
+            )
+            self._reconnect_task.cancel()
 
         current_task = asyncio.current_task()
         if (
@@ -287,6 +349,7 @@ class PhilipsAirPurifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._reconnect_retry_task.cancel()
             self._reconnect_retry_task = None
 
+        self._reconnect_started = asyncio.get_event_loop().time()
         self._reconnect_task = self.hass.async_create_background_task(
             self._do_reconnect(),
             f"philips_airpurifier_reconnect_{self.host}",
@@ -314,9 +377,9 @@ class PhilipsAirPurifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Perform the actual reconnect."""
         try:
             with contextlib.suppress(Exception):
-                await self.client.shutdown()
+                await asyncio.wait_for(self.client.shutdown(), timeout=SHUTDOWN_TIMEOUT)
 
-            if self.model_config.status_nudge:
+            if self._status_nudge_enabled:
                 # Re-fetch via nudge before re-establishing the observe stream.
                 # _async_refresh_via_nudge owns the coordinator client here: a
                 # client created now would be evicted by the nudge helper's
@@ -325,7 +388,9 @@ class PhilipsAirPurifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             else:
                 self.client = await async_create_client(self.host, create_client=CoAPClient.create)
                 # One-shot read before re-establishing the observe stream.
-                status, timeout = await self.client.get_status(observe=False)
+                status, timeout = await asyncio.wait_for(
+                    self.client.get_status(observe=False), timeout=COAP_CALL_TIMEOUT
+                )
                 self._timeout = timeout
                 self._last_update = asyncio.get_event_loop().time()
                 self._mark_available()
@@ -362,7 +427,7 @@ class PhilipsAirPurifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.debug("First refresh (via HTTP poll) completed for %s", self.host)
             return
 
-        if self.model_config.status_nudge:
+        if self._status_nudge_enabled:
             try:
                 # This firmware never answers a status read; force the first
                 # push with a nudge, then observe for subsequent changes.
@@ -375,10 +440,16 @@ class PhilipsAirPurifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._start_observing()
             return
 
+        if not self._update_watchdog_enabled and self.data is not None:
+            self._last_update = asyncio.get_event_loop().time()
+            self._mark_available()
+            self._start_observing()
+            return
+
         try:
             # One-shot initial read; continuous updates come from the observe
             # stream started below, so don't register a second observation here.
-            status, timeout = await self.client.get_status(observe=False)
+            status, timeout = await asyncio.wait_for(self.client.get_status(observe=False), timeout=COAP_CALL_TIMEOUT)
             self._timeout = timeout
             self._mark_available()
             self.async_set_updated_data(status)
@@ -416,4 +487,4 @@ class PhilipsAirPurifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 await task
 
         with contextlib.suppress(Exception):
-            await self.client.shutdown()
+            await asyncio.wait_for(self.client.shutdown(), timeout=SHUTDOWN_TIMEOUT)

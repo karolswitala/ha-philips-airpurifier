@@ -7,6 +7,13 @@ and this project adheres to [Calendar Versioning](https://calver.org/) (`YYYY.MM
 
 ## [Unreleased]
 
+### Changed
+
+- Merged upstream releases `2026.8.0` through `2026.9.2` (below), including the
+  per-device update-watchdog and missed-package options, AC2220 support and the
+  HU1509/HU1510/HU4209 status-nudge fixes. These options apply to CoAP devices
+  only; HTTP devices poll and have no watchdog.
+
 ### Fixed
 
 - Connecting to a device over the legacy HTTP API now retries the Diffie-Hellman
@@ -14,24 +21,90 @@ and this project adheres to [Calendar Versioning](https://calver.org/) (`YYYY.MM
   handshake offered to it after an idle spell, so adding an entry logged a
   connection warning and relied on Home Assistant's retry five seconds later.
 
-## [2026.7.0] - 2026-07-31
+## [2026.9.2] - 2026-09-30
 
-First release of the fork at
-[karolswitala/ha-philips-airpurifier](https://github.com/karolswitala/ha-philips-airpurifier),
-which adds the legacy HTTP transport. Everything below is relative to upstream `2026.6.3`.
+### Fixed
+
+- Reduced Home Assistant event-loop blocking warnings during Philips CoAP
+  client creation by preparing aiocoap transport defaults in a worker thread
+  before opening the CoAP client.
+- Replaced deprecated `CONCENTRATION_MICROGRAMS_PER_CUBIC_METER` usage with
+  `UnitOfDensity.MICROGRAMS_PER_CUBIC_METER` to stay compatible with the
+  Home Assistant 2027.8 deprecation timeline.
+
+## [2026.9.1] - 2026-09-28
+
+### Fixed
+
+- The **HU1509/HU1510** and **HU4209/00** now use a status nudge (toggling the
+  display backlight) to fetch status, like the CX7550. Newer firmware on some
+  of these humidifiers never answers a plain status read and only pushes
+  updates on a real state change, which previously caused
+  detection to time out, setup to fail with `ConfigEntryNotReady`, or the
+  device to go permanently unavailable after the CoAP observe stream dropped
+  (reconnect kept retrying a read the firmware would never answer). The
+  nudge path also strips the `#N` suffix from the backlight key so it matches
+  the observed status payload and restores the user-selected backlight state
+  instead of forcing a stale value.
+- Nudge-based devices (CX7550, HU1509/HU1510, HU4209/00) no longer go
+  permanently silent when the CoAP observe stream hangs without erroring. The
+  update watchdog was unconditionally disabled for these models on the
+  assumption that a real disconnect always raises on the stream; in practice
+  the stream can go quiet forever without raising (socket alive, no data, no
+  exception), which nothing then detects. The watchdog now runs for these
+  devices too, with a much longer timeout (30 minutes) so a device that is
+  legitimately idle is not needlessly reconnected. The per-device "update
+  watchdog" option can still disable it entirely for a device known to sit
+  idle for very long stretches.
+- The watchdog missed-package threshold is now configurable per device with a
+  clear precedence order: per-device override, per-model default, then the
+  global fallback. This lets models like the **AC3039** stay online longer in
+  standby without forcing a broader change for every device, while still
+  keeping the default watchdog tolerance at 3 missed packages globally
+  ([#92](https://github.com/ruaan-deysel/ha-philips-airpurifier/issues/92)).
+
+## [2026.9.0] - 2026-09-04
+
+### Fixed
+
+- Fix JSON Syntax on icons
+
+## [2026.8.0] - 2026-08-30
+
+### Fixed
+
+- Reconnect recovery can no longer wedge indefinitely when a CoAP status read
+  stalls during reconnect. Coordinator CoAP calls are now time-bounded and
+  stale reconnect tasks are treated as wedged, so retries and availability
+  recovery continue as expected
+  ([#101](https://github.com/ruaan-deysel/ha-philips-airpurifier/pull/101)).
+- Rotation (oscillation) control is available again on the **AMF870**
+  (Series 8000i 2-in-1). The model configuration listed only the target
+  temperature under its numbers, which replaced rather than extended the AMF
+  family defaults and silently dropped the rotation angle entity. The
+  **Oscillation** number (0° = off, 30°–350° in 5° steps) is restored next to
+  the target temperature, and the fan entity now supports the standard
+  `fan.oscillate` service and the oscillation toggle in the UI. The AMF765
+  gains the same oscillation toggle — it kept the angle entity but never
+  exposed the on/off control.
+- On the **AMF765** and **AMF870**, where the angle and the on/off state share
+  one device key, switching oscillation back on now restores the rotation angle
+  the device last reported instead of overwriting it with a fixed value. When no
+  angle has been reported yet — for example right after a Home Assistant restart
+  — it starts at the configured default of 90° instead. Models whose oscillation
+  key is a fixed on/off code are unaffected and keep writing their documented
+  on-value.
+- The `oscillation` and `target_temperature` number entities are translated
+  again in German, Dutch and Bulgarian. Their translation keys were misspelled
+  (`oscillaton`, `target_temp`) and never matched `strings.json`, so those
+  entities fell back to their English names.
 
 ### Added
 
-- Support for devices that speak only the **legacy HTTP (`/di/v1`) API** and have
-  no CoAP stack at all — for example the **AC2889/10 on firmware 14**. The config
-  flow now probes CoAP first and falls back to HTTP, storing the detected
-  transport on the config entry. HTTP devices poll every 30 seconds, since that
-  API cannot push; CoAP devices are unaffected and keep their push behaviour.
-  Because the HTTP status resource carries no identity fields, the model, name,
-  device id, software version and MAC address are read from the `/firmware`,
-  `/wifi` and `/upnp/description.xml` resources instead. `philips-airctrl` ships
-  no HTTP transport, so this lives in the new `http_client.py`.
-- DHCP auto-discovery for the `E8C1D7*` MAC prefix, used by AC2889 units.
+- Added a per-device option to enable or disable the update watchdog. This is
+  useful for models that rely on status nudges and can remain idle for long
+  periods without emitting push updates
+  ([#100](https://github.com/ruaan-deysel/ha-philips-airpurifier/pull/100)).
 - Support for the **CX7550/01** (Philips oscillating tower fan). It uses Gen3
   CoAP and is fan-only (no heater). Exposes all 12 manual fan speeds, the Auto,
   Sleep and Natural preset modes, on/off oscillation, the display backlight
@@ -71,6 +144,25 @@ which adds the legacy HTTP transport. Everything below is relative to upstream `
   user can observe: the percentage-based filter sensors, the single
   `Failed to connect to host` warning absorbed by retry during setup, and the
   fact that the `coap` and `philips_airctrl` loggers stay silent over HTTP.
+
+## [2026.7.0] - 2026-07-31
+
+First release of the fork at
+[karolswitala/ha-philips-airpurifier](https://github.com/karolswitala/ha-philips-airpurifier),
+which adds the legacy HTTP transport. Everything below is relative to upstream `2026.6.3`.
+
+### Added
+
+- Support for devices that speak only the **legacy HTTP (`/di/v1`) API** and have
+  no CoAP stack at all — for example the **AC2889/10 on firmware 14**. The config
+  flow now probes CoAP first and falls back to HTTP, storing the detected
+  transport on the config entry. HTTP devices poll every 30 seconds, since that
+  API cannot push; CoAP devices are unaffected and keep their push behaviour.
+  Because the HTTP status resource carries no identity fields, the model, name,
+  device id, software version and MAC address are read from the `/firmware`,
+  `/wifi` and `/upnp/description.xml` resources instead. `philips-airctrl` ships
+  no HTTP transport, so this lives in the new `http_client.py`.
+- DHCP auto-discovery for the `E8C1D7*` MAC prefix, used by AC2889 units.
 
 ## [2026.6.3] - 2026-06-27
 

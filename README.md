@@ -200,6 +200,7 @@ If your device changes IP addresses:
 | **AC0950**   | AC0950, AC0951                             | Compact Air Purifiers   |
 | **AC1214**   | AC1214                                     | Compact Air Purifiers   |
 | **AC1715**   | AC1715                                     | Compact Air Purifiers   |
+| **AC2200**   | AC2210/10, AC2220/10, AC2221/13            | PureProtect Quiet 2200  |
 | **AC2729**   | AC2729                                     | Mid-range Air Purifiers |
 | **AC2889**   | AC2889                                     | Mid-range Air Purifiers |
 | **AC2936**   | AC2936, AC2939, AC2958, AC2959             | Mid-range Air Purifiers |
@@ -254,6 +255,13 @@ If your device changes IP addresses:
 - AMF series are dedicated 2-in-1 air purifier and humidifier devices
 - CX and HU series are dedicated humidifiers
 
+**AMF765 / AMF870 Rotation (Oscillation) Notes:**
+
+- The AMF models keep the rotation angle and the on/off state in a single device value, which this integration surfaces in two ways:
+  - the **Oscillation** number entity sets the angle directly — `0°` stops the rotation, `30°` to `350°` (in 5° steps) start it at that angle;
+  - the fan entity's **oscillation** toggle (`fan.oscillate`) starts and stops the rotation without having to pick an angle.
+- Turning the rotation off and on again restores the last angle the device reported. If no angle has been seen yet (for example, right after a Home Assistant restart), switching it on uses 90°.
+
 **CX7550 Oscillating Fan Notes:**
 
 - **Initial setup requires the Philips Air app**: the CX7550 must first be joined to your Wi-Fi network with the official Philips Air mobile app. Once it is on the network, this integration controls it entirely locally over CoAP — no cloud or app is needed for day-to-day use.
@@ -268,7 +276,7 @@ This integration provides comprehensive control through various Home Assistant e
 
 | Entity Type    | Description                             | Features                              |
 | -------------- | --------------------------------------- | ------------------------------------- |
-| **Fan**        | Main device control                     | Power, speed control, preset modes    |
+| **Fan**        | Main device control                     | Power, speed, preset modes, rotation  |
 | **Humidifier** | Humidity control (2-in-1 models)        | Target humidity, humidification modes |
 | **Climate**    | Temperature control (applicable models) | Temperature settings, heating modes   |
 

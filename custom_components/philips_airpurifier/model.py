@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from .const import DEFAULT_MISSED_PACKAGE_COUNT
+
 DeviceStatus = dict[str, Any]
 
 # Type aliases for entity description dicts used in const.py.
@@ -73,6 +75,12 @@ class DeviceModelConfig:
     unavailable_filters: list[str] = field(default_factory=_default_string_list)
     unavailable_sensors: list[str] = field(default_factory=_default_string_list)
     oscillation: dict[str, dict[str, Any]] | None = None
+    # True when the oscillation key holds the rotation angle itself rather than
+    # a fixed on/off code (the AMF family: 0 = off, 30..350 = degrees). Only
+    # then may a reported value be written back to restore the previous angle;
+    # for the fixed-code models the device is not assumed to report the value
+    # that has to be written to switch oscillation on.
+    oscillation_is_angle: bool = False
     create_fan: bool = True
     # Special behavior flags
     requires_mode_cycling: bool = False  # AC1214 needs mode cycling
@@ -85,6 +93,9 @@ class DeviceModelConfig:
     # genuine change; the sequence should end on a benign, well-defined value.
     # None = device serves status normally (the default for all other models).
     status_nudge: list[tuple[str, Any]] | None = None
+    # Default missed-packet threshold for the watchdog for this model; a
+    # per-device override or the global fallback can still override it.
+    missed_package_count: int = DEFAULT_MISSED_PACKAGE_COUNT
 
     @property
     def power_key(self) -> str:

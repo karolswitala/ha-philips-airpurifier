@@ -20,6 +20,7 @@ from custom_components.philips_airpurifier.repairs import (
     DuplicateEntitiesFlow,
     EntityRegistryCleanupFlow,
     FilterReplacementWarningFlow,
+    _entity_registry_identity,
     _transport_kwargs,
     async_check_integration_health,
     async_create_fix_flow,
@@ -751,3 +752,10 @@ async def test_check_health_unknown_capacity_healthy_filter_does_not_warn(
 
     registry = ir.async_get(hass)
     assert registry.async_get_issue(DOMAIN, "filter_replacement_warning") is None
+
+
+def test_entity_registry_identity_without_unique_id() -> None:
+    """An entity with no unique ID has no registry identity to compare."""
+    entity = SimpleNamespace(unique_id=None, entity_id="fan.test")
+
+    assert _entity_registry_identity(entity) is None

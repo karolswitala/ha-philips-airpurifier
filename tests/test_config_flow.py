@@ -15,6 +15,7 @@ from custom_components.philips_airpurifier.const import (
     CONF_MODEL,
     CONF_PROTOCOL,
     CONF_STATUS,
+    CONF_UPDATE_WATCHDOG,
     DOMAIN,
     PhilipsApi,
     Protocol,
@@ -235,6 +236,51 @@ async def test_user_flow_status_nudge_fallback(
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_MODEL] == "CX7550"
+
+
+async def test_user_flow_status_nudge_fallback_hu1509(
+    hass: HomeAssistant,
+    mock_coap_client_config_flow: AsyncMock,
+) -> None:
+    """Test the HU1509 recovers via nudge when newer firmware never answers a read.
+
+    Some HU1509/HU1510 units on newer firmware behave like the CX7550:
+    push-only, never answering a plain status read.
+    """
+    hu1509_status = {
+        PhilipsApi.NEW2_MODEL_ID: "HU1509/10",
+        PhilipsApi.NEW2_NAME: "Bedroom",
+        PhilipsApi.DEVICE_ID: TEST_DEVICE_ID,
+        PhilipsApi.WIFI_VERSION: "AWS_Philips_AIR_Combo@86",
+        PhilipsApi.NEW2_POWER: 1,
+    }
+    with (
+        patch(
+            "custom_components.philips_airpurifier.config_flow.async_fetch_status",
+            AsyncMock(side_effect=TimeoutError),
+        ),
+        patch(
+            "custom_components.philips_airpurifier.config_flow.async_fetch_device_info",
+            AsyncMock(return_value={"modelid": "HU1509/10", "name": "Bedroom"}),
+        ),
+        patch(
+            "custom_components.philips_airpurifier.config_flow.async_fetch_status_with_nudge",
+            AsyncMock(return_value=hu1509_status),
+        ),
+        # Entry setup for a nudge device also fetches via nudge in the coordinator.
+        patch(
+            "custom_components.philips_airpurifier.coordinator.async_fetch_status_with_nudge",
+            AsyncMock(return_value=hu1509_status),
+        ),
+    ):
+        result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_HOST: TEST_HOST},
+        )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_MODEL] == "HU1509"
 
 
 async def test_user_flow_nudge_fetch_fails(
@@ -1309,3 +1355,82 @@ async def test_reconfigure_flow_records_protocol(hass: HomeAssistant) -> None:
     assert result["reason"] == "reconfigure_successful"
     assert entry.data[CONF_HOST] == TEST_HOST
     assert entry.data[CONF_PROTOCOL] == Protocol.HTTP
+
+
+async def test_options_flow_update_watchdog_available(
+    hass: HomeAssistant,
+) -> None:
+    """Test update watchdog option is available for devices."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            CONF_HOST: TEST_HOST,
+            CONF_MODEL: TEST_MODEL,
+            CONF_NAME: TEST_NAME,
+            CONF_DEVICE_ID: TEST_DEVICE_ID,
+            CONF_STATUS: MOCK_STATUS_GEN1,
+        },
+        unique_id=TEST_DEVICE_ID,
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "init"
+
+
+async def test_options_flow_update_watchdog_can_be_disabled(
+    hass: HomeAssistant,
+) -> None:
+    """Test update watchdog can be disabled per device."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            CONF_HOST: TEST_HOST,
+            CONF_MODEL: TEST_MODEL,
+            CONF_NAME: TEST_NAME,
+            CONF_DEVICE_ID: TEST_DEVICE_ID,
+            CONF_STATUS: MOCK_STATUS_GEN1,
+        },
+        unique_id=TEST_DEVICE_ID,
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={CONF_UPDATE_WATCHDOG: False},
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options[CONF_UPDATE_WATCHDOG] is False
+
+
+async def test_options_flow_missed_package_count_can_be_configured(
+    hass: HomeAssistant,
+) -> None:
+    """Test the watchdog missed-packet threshold can be set per device."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            CONF_HOST: TEST_HOST,
+            CONF_MODEL: TEST_MODEL,
+            CONF_NAME: TEST_NAME,
+            CONF_DEVICE_ID: TEST_DEVICE_ID,
+            CONF_STATUS: MOCK_STATUS_GEN1,
+        },
+        unique_id=TEST_DEVICE_ID,
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={CONF_UPDATE_WATCHDOG: True, "missed_package_count": 10},
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options["missed_package_count"] == 10

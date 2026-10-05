@@ -9,7 +9,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from custom_components.philips_airpurifier import client as client_module
 from custom_components.philips_airpurifier.client import (
+    _async_prepare_aiocoap_client_transport_env,
+    _resolve_aiocoap_client_transport_env,
     async_create_client,
     async_fetch_device_info,
     async_fetch_status,
@@ -224,3 +227,23 @@ async def test_async_fetch_device_info_bounds_the_read() -> None:
         )
 
     client.shutdown.assert_awaited_once()
+
+
+def test_resolve_aiocoap_transport_env_none_when_no_transports() -> None:
+    """No env value is produced when aiocoap reports no client transports."""
+    with patch("aiocoap.defaults.get_default_clienttransports", return_value=()):
+        assert _resolve_aiocoap_client_transport_env() is None
+
+
+async def test_prepare_aiocoap_transport_env_rechecks_under_lock() -> None:
+    """A caller that waited on the lock does not redo work another caller finished."""
+    with patch.object(client_module, "_aiocoap_transport_env_ready", False):
+        await client_module._aiocoap_transport_env_lock.acquire()
+        waiter = asyncio.create_task(_async_prepare_aiocoap_client_transport_env())
+        await asyncio.sleep(0)
+        client_module._aiocoap_transport_env_ready = True
+        with patch(f"{_CLIENT}.asyncio.to_thread") as to_thread:
+            client_module._aiocoap_transport_env_lock.release()
+            await waiter
+
+    to_thread.assert_not_called()
